@@ -571,16 +571,14 @@ def run_live_revenue_validation(
         from automations.actuals.actuals_report_layout import (
             canonical as report_canonical,
             rounded as report_rounded,
-            variance as report_variance,
-            validation_status as report_validation_status,
-            style_status as report_style_status,
         )
+        from automations.actuals.report_builder import PeriodValues
+        from automations.actuals.report_builder import variance as report_variance
         from openpyxl.comments import Comment
         for company in ("ALIV", "CBL"):
             sheet = report[f"{company} Revenue"]
-            compact = report_canonical(sheet.cell(7, 1).value) == "FINANCIAL STATEMENT LINE"
-            first_data_row = 8 if compact else 7
-            for row in range(first_data_row, sheet.max_row + 1):
+            # This is the capture (A:S) workbook; the final layout is built later.
+            for row in range(7, sheet.max_row + 1):
                 label = report_canonical(sheet.cell(row, 1).value)
                 if not label:
                     continue
@@ -596,28 +594,19 @@ def run_live_revenue_validation(
                     amount_000 = report_rounded(
                         Decimal(str(matched[0][1])) / Decimal("1000")
                     )
-                    if compact:
-                        fs_col, group_col, individual_col, variance_col, status_col = (
-                            (2, 3, 4, 6, 7) if basis == "MONTH" else (9, 10, 11, 13, 14)
-                        )
-                        sheet.cell(row, individual_col, amount_000)
-                        fs_value = sheet.cell(row, fs_col).value
-                        group_value = sheet.cell(row, group_col).value
-                        sheet.cell(row, variance_col, report_variance(group_value, amount_000))
-                        status = report_validation_status(fs_value, group_value, amount_000)
-                        sheet.cell(row, status_col, status)
-                        report_style_status(sheet.cell(row, status_col))
-                    else:
-                        fs_col, group_col, individual_col, fs_diff_col, group_diff_col, status_col = (
-                            (2, 3, 12, 13, 14, 15) if basis == "MONTH"
-                            else (8, 9, 16, 17, 18, 19)
-                        )
-                        sheet.cell(row, individual_col, amount_000)
-                        fs_value = sheet.cell(row, fs_col).value
-                        group_value = sheet.cell(row, group_col).value
-                        sheet.cell(row, fs_diff_col, report_variance(fs_value, amount_000))
-                        sheet.cell(row, group_diff_col, report_variance(group_value, amount_000))
-                        status_cell(sheet.cell(row, status_col), report_validation_status(fs_value, group_value, amount_000))
+                    fs_col, group_col, individual_col, fs_diff_col, group_diff_col, status_col = (
+                        (2, 3, 12, 13, 14, 15) if basis == "MONTH"
+                        else (8, 9, 16, 17, 18, 19)
+                    )
+                    sheet.cell(row, individual_col, amount_000)
+                    fs_value = sheet.cell(row, fs_col).value
+                    group_value = sheet.cell(row, group_col).value
+                    sheet.cell(row, fs_diff_col, report_variance(fs_value, amount_000))
+                    sheet.cell(row, group_diff_col, report_variance(group_value, amount_000))
+                    status_cell(
+                        sheet.cell(row, status_col),
+                        PeriodValues(fs_value, group_value, amount_000).status,
+                    )
                 # Lines without independent detail remain NOT VALIDATED/PENDING.
         refresh_summary(report)
         report.save(path)
