@@ -85,6 +85,14 @@ def configure() -> Path:
     root.addHandler(file_handler)
 
     original_out, original_err = sys.stdout, sys.stderr
+    if original_err is not None:
+        # Warnings and errors also show in the terminal when there is one.
+        console = logging.StreamHandler(original_err)
+        console.setLevel(logging.WARNING)
+        console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        # print() output already reaches the terminal directly.
+        console.addFilter(lambda record: record.name not in ("output", "errors"))
+        root.addHandler(console)
     sys.stdout = _StreamToLogger(logging.getLogger("output"), logging.INFO, original_out)
     sys.stderr = _StreamToLogger(logging.getLogger("errors"), logging.ERROR, original_err)
 
