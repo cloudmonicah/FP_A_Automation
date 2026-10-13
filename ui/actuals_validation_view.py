@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from datetime import date
 from pathlib import Path
 
@@ -21,6 +23,8 @@ from automations.actuals.direct_cost_validation_service import (
     run_live_direct_cost_validation,
 )
 
+
+log = logging.getLogger(__name__)
 
 class ActualsValidationView(tb.Frame):
 
@@ -662,6 +666,7 @@ class ActualsValidationView(tb.Frame):
             print("=" * 70)
 
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
 
             # -------------------------------------------------
             # UPDATE GUI WITH ERROR STATE
@@ -911,6 +916,7 @@ class ActualsValidationView(tb.Frame):
             validation_thread.start()
 
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
 
             messagebox.showerror(
                 "Actuals Validation",
@@ -991,6 +997,7 @@ class ActualsValidationView(tb.Frame):
                 daemon=True,
             ).start()
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             messagebox.showerror(
                 "OPEX-only test", str(exc), parent=self.winfo_toplevel()
             )
@@ -1016,6 +1023,7 @@ class ActualsValidationView(tb.Frame):
             status = report_status(report)
             self.after(0, self._finish_individual_opex_only, status, result)
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             self.after(0, self._actuals_validation_failed, str(exc))
 
     def _finish_individual_opex_only(self, status, result):
@@ -1054,6 +1062,7 @@ class ActualsValidationView(tb.Frame):
         try:
             period = self._get_closed_period()
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             messagebox.showerror("Reporting period", str(exc), parent=self.winfo_toplevel())
             return
         self.validation_running = True
@@ -1076,7 +1085,9 @@ class ActualsValidationView(tb.Frame):
         from automations.actuals.tableau_desktop_close_service import close_tableau_forecast_workbook
 
         worksheet = "CBL FS Rollup View Group Monthly Revenue YTD_SUMMARY"
-        folder = Path.cwd() / "Revenue_Live_Test_Results" / f"{period:%Y-%m}_GUI"
+        from shared.settings import user_dir
+
+        folder = user_dir() / "Revenue_Live_Test_Results" / f"{period:%Y-%m}_GUI"
         try:
             folder.mkdir(parents=True, exist_ok=True)
             for basis in ("MONTH", "YTD"):
@@ -1098,10 +1109,12 @@ class ActualsValidationView(tb.Frame):
                         try:
                             close_tableau_forecast_workbook(tableau_workbook_path=str(temporary))
                         except Exception as exc:
+                            log.exception("Error in %s", type(self).__name__)
                             print(f"[REVENUE GUI] Close warning: {exc}", flush=True)
                     temporary.unlink(missing_ok=True)
             self.after(0, self._revenue_live_test_finished, str(folder), None)
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             self.after(0, self._revenue_live_test_finished, str(folder), str(exc))
 
     def _revenue_live_test_finished(self, folder, error):
@@ -1254,6 +1267,7 @@ class ActualsValidationView(tb.Frame):
             result["overall_status"] = report_status(result["final_report"])
             self.after(0, self._finish_actuals_validation, {category: result})
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             self.after(0, self._actuals_validation_failed, str(exc))
 
     # =========================================================

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import os
 import threading
 from pathlib import Path
@@ -32,6 +34,8 @@ MONTH_LOOKUP = {
     "December": 12,
 }
 
+
+log = logging.getLogger(__name__)
 
 class ForecastRefreshView(tb.Frame):
     """
@@ -552,6 +556,7 @@ class ForecastRefreshView(tb.Frame):
             )
             self.after(0, lambda r=result: self._prepare_complete(r))
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             self.after(0, lambda e=exc: self._process_failed(e))
 
     def _prepare_complete(self, result: dict) -> None:
@@ -634,6 +639,7 @@ class ForecastRefreshView(tb.Frame):
             )
             self.after(0, lambda r=result: self._population_complete(r))
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             self.after(0, lambda e=exc: self._process_failed(e))
 
     def _population_complete(self, result: dict) -> None:
@@ -738,6 +744,7 @@ class ForecastRefreshView(tb.Frame):
             )
             self.after(0, lambda r=result: self._validation_complete(r))
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             self.after(0, lambda e=exc: self._process_failed(e))
 
     def _validation_complete(self, result: dict) -> None:

@@ -217,6 +217,17 @@ def _get_possible_onedrive_roots() -> list[Path]:
 
 def find_actuals_validation_results_folder() -> Path:
 
+    from shared import settings
+
+    configured = settings.get_path("validation_output_root")
+    if configured is not None:
+        if not configured.is_dir():
+            raise FileNotFoundError(
+                "The validation output folder in Settings was not found:\n"
+                f"{configured}\n\nCheck the shared drive is connected, or update Settings."
+            )
+        return configured
+
     expected_name_fragment = VALIDATION_ROOT_FOLDER
 
     possible_roots = _get_possible_onedrive_roots()
@@ -330,7 +341,7 @@ def create_validation_output_folders(
     This makes the function portable between users and PCs.
 
     Example supplied base:
-        ...\Finance_Validation_Results
+        ...\\Finance_Validation_Results
 
     Output:
         Finance_Validation_Results

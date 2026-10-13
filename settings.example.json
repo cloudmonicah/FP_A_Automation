@@ -1,0 +1,9 @@
+{
+  "workbooks_root": "\\\\SERVER\\FP&A\\Workbooks",
+  "validation_output_root": "\\\\SERVER\\FP&A\\Finance_Validation_Results",
+  "forecast_validation_output_root": "",
+  "budget_source_folder": "\\\\SERVER\\FP&A\\Sources\\Budgets",
+  "budget_output_folder": "\\\\SERVER\\FP&A\\Sources\\Forecast",
+  "test_mode": false,
+  "log_level": "INFO"
+}

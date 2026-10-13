@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import os
 import threading
 from pathlib import Path
@@ -8,7 +10,10 @@ from tkinter import filedialog, messagebox
 import ttkbootstrap as tb
 
 from automations.budget_setup.service import create_initial_forecasts
+from shared import settings
 
+
+log = logging.getLogger(__name__)
 
 class BudgetSetupView(tb.Frame):
     def __init__(self, parent) -> None:
@@ -21,8 +26,8 @@ class BudgetSetupView(tb.Frame):
         self.source_fy_var = tb.StringVar(value="FY26")
         self.target_fy_var = tb.StringVar(value="FY27")
 
-        self.source_folder_var = tb.StringVar(value=r"E:\Sources\Budgets")
-        self.output_folder_var = tb.StringVar(value=r"E:\Sources\Forecast")
+        self.source_folder_var = tb.StringVar(value=settings.get("budget_source_folder"))
+        self.output_folder_var = tb.StringVar(value=settings.get("budget_output_folder"))
 
         self.overwrite_var = tb.StringVar(value="skip")
 
@@ -431,6 +436,7 @@ class BudgetSetupView(tb.Frame):
             )
 
         except Exception as exc:
+            log.exception("Error in %s", type(self).__name__)
             error_message = f"{type(exc).__name__}: {exc}"
 
             self.after(

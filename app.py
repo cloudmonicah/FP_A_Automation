@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+from tkinter import messagebox
+
 import ttkbootstrap as tb
 
 from config import (
@@ -13,6 +16,10 @@ from config import (
 from ui.forecast_refresh_view import ForecastRefreshView
 from ui.actuals_validation_view import ActualsValidationView
 from ui.budget_setup_view import BudgetSetupView
+from ui.settings_view import SettingsView
+from shared.logging_setup import log_file
+
+log = logging.getLogger(__name__)
 
 
 class FinanceAutomationApp:
@@ -27,6 +34,7 @@ class FinanceAutomationApp:
 
         self.current_page = None
         self.nav_buttons = {}
+        self.app.report_callback_exception = self._report_error
 
         self._build_header()
         self._build_body()
@@ -86,6 +94,7 @@ class FinanceAutomationApp:
             ("forecast", "Monthly Forecast"),
             ("actuals", "Actuals Validation"),
             ("budget", "Initial Budget Setup"),
+            ("settings", "Settings"),
         ]
 
         for key, label in pages:
@@ -129,6 +138,7 @@ class FinanceAutomationApp:
             "forecast": ForecastRefreshView,
             "actuals": ActualsValidationView,
             "budget": BudgetSetupView,
+            "settings": SettingsView,
         }
 
         view_class = views[page]
@@ -148,9 +158,20 @@ class FinanceAutomationApp:
                 bootstyle=("primary" if key == page else "secondary-outline")
             )
 
+    def _report_error(self, exc_type, exc, tb) -> None:
+        """Log any error raised in a button handler and tell the user."""
+        log.error("Unhandled error in the app", exc_info=(exc_type, exc, tb))
+        messagebox.showerror(
+            "Something went wrong",
+            f"{exc}\n\nDetails were written to the log file:\n{log_file()}",
+            parent=self.app,
+        )
+
     def run(self) -> None:
         self.app.mainloop()
 
 
 if __name__ == "__main__":
-    FinanceAutomationApp().run()
+    from main import main
+
+    main()
