@@ -24,7 +24,8 @@ APP_NAME = "FPA Automation"
 
 DEFAULTS: dict[str, Any] = {
     # Root folder holding the Tableau workbooks, with OPEX, SAC, Revenue and
-    # Direct Cost subfolders. Use the shared-drive path, e.g. \\server\FP&A\Workbooks
+    # Direct Cost subfolders. Any path setting may use environment variables,
+    # e.g. %USERPROFILE%\Aliv\FP&A - Workbooks for a synced SharePoint library.
     "workbooks_root": r"E:\Workbooks",
     # Actuals validation output. Blank = find the synced OneDrive folder automatically.
     "validation_output_root": "",
@@ -116,4 +117,5 @@ def save_user_settings(values: dict[str, Any]) -> Path:
 
 def workbook_path(*parts: str) -> str:
     """Path under the Tableau workbooks root, e.g. workbook_path("OPEX", "Legal.twb")."""
-    return str(Path(str(get("workbooks_root"))).joinpath(*parts))
+    root = os.path.expandvars(str(get("workbooks_root")))
+    return str(Path(root).expanduser().joinpath(*parts))

@@ -39,3 +39,9 @@ def test_layering_and_save(isolated):
 def test_bad_json_is_ignored(isolated):
     (isolated / "settings.json").write_text("{not json", encoding="utf-8")
     assert settings.load(refresh=True)["log_level"] == "INFO"
+
+
+def test_environment_variables_expand(isolated, monkeypatch):
+    monkeypatch.setenv("FPA_TEST_HOME", "/users/alex")
+    settings.save_user_settings({"workbooks_root": "$FPA_TEST_HOME/Workbooks"})
+    assert settings.workbook_path("OPEX").replace("\\", "/") == "/users/alex/Workbooks/OPEX"

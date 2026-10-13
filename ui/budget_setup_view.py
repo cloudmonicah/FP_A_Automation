@@ -26,8 +26,8 @@ class BudgetSetupView(tb.Frame):
         self.source_fy_var = tb.StringVar(value="FY26")
         self.target_fy_var = tb.StringVar(value="FY27")
 
-        self.source_folder_var = tb.StringVar(value=settings.get("budget_source_folder"))
-        self.output_folder_var = tb.StringVar(value=settings.get("budget_output_folder"))
+        self.source_folder_var = tb.StringVar(value=str(settings.get_path("budget_source_folder") or ""))
+        self.output_folder_var = tb.StringVar(value=str(settings.get_path("budget_output_folder") or ""))
 
         self.overwrite_var = tb.StringVar(value="skip")
 

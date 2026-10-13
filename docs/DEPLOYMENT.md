@@ -26,6 +26,26 @@ Colleagues do **not** need Python.
 3. Double-click `build_exe.bat`. It creates a clean build environment, runs the tests, builds the app and copies `settings.json` into the build. The build stops if any test fails.
 4. The result is the folder `dist\FPA Automation\`. Run `FPA Automation.exe` inside it once yourself.
 
+## Using Microsoft 365 (SharePoint / Teams) instead of a network drive
+
+Keep three things apart:
+
+| What | Where | Who |
+| --- | --- | --- |
+| Source code | GitHub, cloned to a local, non-OneDrive folder such as `C:\Dev\FPA_Automation` | Only whoever maintains the app |
+| The built app | A SharePoint/Teams library, e.g. *FP&A team > Documents > Apps* | Everyone, read-only |
+| Workbooks, statements, reports | SharePoint/Teams libraries, synced to each PC | Everyone |
+
+The app reads and writes ordinary Windows folders, so SharePoint libraries must be **synced** to each PC: open the library in the browser and click **Sync** (or **Add shortcut to My files**). Then:
+
+- In File Explorer, right-click the synced Workbooks folder and choose **Always keep on this device**. Tableau and the app can't open files that are still "online-only".
+- Synced folders live under each person's profile, so their paths differ per person. Use `%USERPROFILE%` in `settings.json` so one file works for everyone, e.g.
+  `"workbooks_root": "%USERPROFILE%\\Aliv\\FP&A - Workbooks"`.
+  Check the exact folder name on one PC: it is usually `C:\Users\<name>\<Company>\<Site> - <Library>`.
+- Have one person run a validation at a time. SharePoint sync can create "conflict" copies if two people save the same report simultaneously.
+
+For releasing the app itself, either colleagues copy the app folder from the Apps library to `C:\Apps\FPA Automation`, or ask IT to package it in **Intune / Company Portal**, which installs and updates it on every PC for you.
+
 ## Releasing a version
 
 1. Copy the whole `dist\FPA Automation` folder to the shared drive, named with its version, e.g. `\\server\FP&A\Apps\FPA Automation 1.0`.
