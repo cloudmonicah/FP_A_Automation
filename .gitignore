@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Backups - use git history instead of copies
+*.bak
+*.backup
+*_backup.py
+*_before_*.py
+Backup_*/
+
+# Generated outputs
+test_outputs/
+Revenue_Integration_Results/
+Revenue_Live_Test_Results/

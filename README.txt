@@ -1,1 +1,0 @@
-Revenue GUI live capture diagnostic. Back up ui/actuals_validation_view.py before extracting. Captures consolidated MONTH and YTD only; no reconciliation report. Does not modify OPEX or Direct Cost services.
