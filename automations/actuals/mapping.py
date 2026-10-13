@@ -553,6 +553,7 @@ REVENUE_CONSUMER_WORKBOOK = (
 REVENUE_CORPORATE_WORKBOOK = (
     rf"{_REVENUE_FOLDER}\Cable Bahamas Group_CORPORATE REVENUE.twb"
 )
+REVENUE_MEDIA_WORKBOOK = rf"{_REVENUE_FOLDER}\Cable Bahamas Group_MEDIA REVENUE.twb"
 
 
 # ============================================================
@@ -730,7 +731,7 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "mapping_column": "GL FS Type",
         "mapping_values": [],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
         "note": "Confirm all applicable OTHER CONSUMER GL FS Type values.",
     },
     {
@@ -741,14 +742,14 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "mapping_column": "GL FS Type",
         "mapping_values": [],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
         "note": "Confirm ALIV Corporate worksheet and categories.",
     },
     {
         "company": "ALIV",
         "fs_line": "Service Revenues",
         "aggregation": AGG_TOTAL,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
         "note": "Control total; not an individual component.",
     },
     # ---------------- CBL ----------------
@@ -775,7 +776,7 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "mapping_column": "GL FS Type",
         "mapping_values": [],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
@@ -787,7 +788,7 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "mapping_column": "GL FS Type",
         "mapping_values": ["CORPORATE POST PAID - ONE OFF"],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
@@ -799,36 +800,36 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "mapping_column": "GL FS Type",
         "mapping_values": ["CORPORATE GOVERNMENT"],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "Media",
-        "individual_tableau_workbook": "",
-        "individual_tableau_worksheet": "",
-        "tableau_categories": [],
+        "individual_tableau_workbook": REVENUE_MEDIA_WORKBOOK,
+        "individual_tableau_worksheet": (" Monthly YTD Actual v Budget by Sub account"),
+        "tableau_categories": ["MEDIA REVENUE"],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "Other",
         "tableau_categories": [],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "MSA-ALIV (Intercompany)",
         "tableau_categories": [],
         "aggregation": AGG_PENDING,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "Gross Revenue",
         "aggregation": AGG_TOTAL,
-        "individual_actuals_enabled": False,
+        "individual_actuals_enabled": True,
         "note": "Control total; do not double count.",
     },
 ]
