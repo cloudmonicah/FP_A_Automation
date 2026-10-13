@@ -2559,7 +2559,7 @@ def populate_individual_forecast_totals(
 
         capture = get_tableau_crosstab_rows
     if opener is None:
-        from automations.actuals.tableau_forecast_service import open_tableau_workbook
+        from automations.forecast.tableau_service import open_tableau_workbook
 
         opener = open_tableau_workbook
     if closer is None:

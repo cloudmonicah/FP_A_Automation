@@ -505,7 +505,7 @@ def _capture_mapping(
         capture = get_tableau_crosstab_rows
 
     if opener is None:
-        from automations.actuals.tableau_forecast_service import (
+        from automations.forecast.tableau_service import (
             open_tableau_workbook,
         )
 

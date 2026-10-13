@@ -103,7 +103,7 @@ def prepare(source, destination, tab, period, basis):
 
 
 def capture(source, tab, period, basis, output, wait):
-    from automations.actuals.tableau_forecast_service import open_tableau_workbook
+    from automations.forecast.tableau_service import open_tableau_workbook
     from automations.actuals.tableau_desktop_export_service import (
         get_tableau_crosstab_text,
     )

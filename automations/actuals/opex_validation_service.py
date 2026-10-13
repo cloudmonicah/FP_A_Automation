@@ -1367,7 +1367,7 @@ def run_live_opex_validation(
 
     if open_tableau_first:
 
-        from automations.actuals.tableau_forecast_service import (
+        from automations.forecast.tableau_service import (
             open_tableau_workbook,
         )
 

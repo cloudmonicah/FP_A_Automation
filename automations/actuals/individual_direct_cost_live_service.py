@@ -86,7 +86,7 @@ def _write_matrix(sheet, matrix):
 
 def run_individual_direct_cost_live(*, output_paths, closed_period, tableau_settings=None, wait_seconds=8):
     """Capture each view in one indexed multi-tab workbook under Tableau Raw Copies."""
-    from automations.actuals.tableau_forecast_service import open_tableau_workbook
+    from automations.forecast.tableau_service import open_tableau_workbook
     from automations.actuals.tableau_desktop_export_service import get_tableau_crosstab_text
     from automations.actuals.tableau_desktop_close_service import close_tableau_forecast_workbook
 

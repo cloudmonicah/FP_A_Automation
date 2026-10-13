@@ -132,7 +132,7 @@ def main():
     closed = False
 
     try:
-        from automations.actuals.tableau_forecast_service import (
+        from automations.forecast.tableau_service import (
             open_tableau_workbook,
         )
 
