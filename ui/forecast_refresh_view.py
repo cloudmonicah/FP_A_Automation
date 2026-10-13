@@ -107,7 +107,7 @@ class ForecastRefreshView(tb.Frame):
 
     def _build_parameters_panel(self, parent) -> None:
 
-        panel = tb.LabelFrame(
+        panel = tb.Labelframe(
             parent,
             text="Forecast Parameters",
             padding=14,
@@ -226,7 +226,7 @@ class ForecastRefreshView(tb.Frame):
         self.validate_button.pack(fill="x", ipady=2)
 
     def _build_status_panel(self, parent) -> None:
-        panel = tb.LabelFrame(
+        panel = tb.Labelframe(
             parent,
             text="Process Status",
             padding=14,
