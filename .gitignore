@@ -22,3 +22,8 @@ Backup_*/
 test_outputs/
 Revenue_Integration_Results/
 Revenue_Live_Test_Results/
+
+# Build output
+build/
+dist/
+.venv-build/

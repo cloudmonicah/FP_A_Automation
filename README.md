@@ -16,22 +16,40 @@ pip install -r requirements.txt
 
 The Tableau automation needs Windows with Tableau Desktop installed.
 
+Copy `settings.example.json` to `settings.json` and set the shared-drive folders,
+or set them later on the app's Settings page.
+
 ## Run the app
 
 ```powershell
 python main.py
 ```
 
+## Tests
+
+```powershell
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`tests/manual/` holds older check scripts that need real workbooks and Tableau; pytest skips them.
+
+## Building the .exe for colleagues
+
+Run `build_exe.bat` on Windows. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for what colleagues need,
+how to release a version, settings, and where the log file is.
+
 ## Project layout
 
 | Path | Contents |
 | --- | --- |
-| `app.py`, `main.py`, `config.py` | App shell and settings |
+| `app.py`, `main.py`, `config.py` | App shell |
 | `ui/` | One view per sidebar page |
 | `automations/` | Business logic for `forecast`, `actuals` and `budget_setup` |
-| `shared/` | Helpers shared across automations |
+| `shared/` | Settings, logging and helpers shared across automations |
 | `scripts/` | Command-line tools you run by hand (see below) |
-| `tests/` | Test scripts |
+| `tests/` | Automated tests (`tests/manual/`: scripts needing real data) |
+| `docs/` | Deployment guide |
 
 ## Command-line scripts
 
