@@ -1247,8 +1247,11 @@ class ActualsValidationView(tb.Frame):
                     closed_period=closed_period,
                 )
                 result["individual_merge"] = merge_result
-                result["overall_status"] = "REVIEW REQUIRED"
 
+            # The final report is the single source of truth for the status.
+            from automations.actuals.actuals_report_layout import report_status
+
+            result["overall_status"] = report_status(result["final_report"])
             self.after(0, self._finish_actuals_validation, {category: result})
         except Exception as exc:
             self.after(0, self._actuals_validation_failed, str(exc))

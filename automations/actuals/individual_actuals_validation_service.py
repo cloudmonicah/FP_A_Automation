@@ -526,10 +526,14 @@ def _capture_mapping(
     # capturing the individual Tableau workbook.
     consolidated_values = {}
     try:
+        from automations.actuals.report_builder import META_SHEET
+
         company_sheet = report[mapping["output_company_sheet"]]
+        # Final layout: YTD consolidated is column J; capture layout: column I.
+        ytd_index = 9 if META_SHEET in report.sheetnames else 8
         for values in company_sheet.iter_rows(min_row=7, values_only=True):
             if str(values[0]).strip().casefold() == mapping["fs_line"].casefold():
-                for basis, index in (("MONTH", 2), ("YTD", 8)):
+                for basis, index in (("MONTH", 2), ("YTD", ytd_index)):
                     try:
                         consolidated_values[basis] = _number(values[index])
                     except (ValueError, IndexError, TypeError):
@@ -799,6 +803,11 @@ def run_individual_opex_pilot(
     audit = raw / "Individual_Actuals_Crosstabs.xlsx"
     groups = []
     from automations.actuals.actuals_report_layout import merge_individual_values
+    from automations.actuals.report_builder import META_SHEET, update_individual_values
+
+    # A finished report is rebuilt through the report builder; the capture
+    # workbook is merged cell by cell.
+    final_layout = META_SHEET in report.sheetnames
 
     def unavailable_pair(message):
         # The merger consumes fixed 14-field rows, one per basis.
@@ -845,8 +854,16 @@ def run_individual_opex_pilot(
             # Commit every mapping immediately. A later failure cannot erase
             # successful captures already written to the intermediate report.
             try:
-                merge_individual_values(report, [(mapping, rows)])
-                report.save(report_path)
+                if final_layout:
+                    month, ytd = rows
+                    update_individual_values(
+                        report_path,
+                        mapping["company"].upper(),
+                        {mapping["fs_line"]: (month[4], ytd[4], month[13] or ytd[13])},
+                    )
+                else:
+                    merge_individual_values(report, [(mapping, rows)])
+                    report.save(report_path)
                 print(f"[INDIVIDUAL OPEX] Saved {mapping['company']} / "
                       f"{mapping['fs_line']} to validation workbook", flush=True)
             except Exception as exc:
@@ -854,7 +871,8 @@ def run_individual_opex_pilot(
                       f"{mapping['fs_line']}: {type(exc).__name__}: {exc}", flush=True)
                 # Try to preserve previously completed rows and continue.
                 try:
-                    report.save(report_path)
+                    if not final_layout:
+                        report.save(report_path)
                 except Exception as save_exc:
                     print(f"[INDIVIDUAL OPEX] SAVE ERROR: {save_exc}", flush=True)
     finally:

@@ -10,8 +10,8 @@ from datetime import date
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Font
 from automations.actuals.mapping import INDIVIDUAL_DIRECT_COST_MAPPINGS
+from automations.actuals.report_builder import update_individual_values
 
 
 def _key(value):
@@ -128,51 +128,36 @@ def _extract(ws, route, closed_period):
 
 
 def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
-    """Update report in place; keep unavailable cells empty and status REVIEW REQUIRED."""
+    """Write captured individual values into the final report and rebuild it.
+
+    Lines whose capture failed keep an empty individual value, so they stay PENDING
+    with the capture reason in their notes.
+    """
     report_path, crosstab_path = Path(report_path), Path(crosstab_path)
-    report = load_workbook(report_path)
-    raw = load_workbook(crosstab_path, read_only=True, data_only=True)
+    updates = {company: {} for company in ("ALIV", "CBL")}
     results = []
+    raw = load_workbook(crosstab_path, read_only=True, data_only=True)
     try:
         for index, route in enumerate(INDIVIDUAL_DIRECT_COST_MAPPINGS, 1):
             company, line = route['company'], route['fs_line']
-            name = f'{index:03d}_{company}_{line}'
-            name = re.sub(r'[\\/*?:\[\]]', '_', name)[:31]
-            sheet_name = f'{company} Direct Cost'
-            if sheet_name not in report:
-                raise ValueError(f'Missing validation worksheet: {sheet_name}')
-            sheet = report[sheet_name]
-            if _key(sheet['A7'].value) != 'FINANCIALSTATEMENTLINE':
-                raise ValueError(f'Unexpected report format in {sheet_name}')
-            matches = [r for r in range(8, sheet.max_row + 1) if _key(sheet.cell(r, 1).value) == _key(line)]
-            if len(matches) != 1:
-                results.append((company, line, 'SKIPPED', f'Expected one report row, found {len(matches)}'))
-                continue
-            row = matches[0]
+            name = re.sub(r'[\\/*?:\[\]]', '_', f'{index:03d}_{company}_{line}')[:31]
             monthly = ytd = None
             if name in raw.sheetnames:
                 monthly, ytd, note = _extract(raw[name], route, closed_period)
             else:
                 note = 'Capture worksheet missing (failed or skipped Tableau capture)'
-            # Report schema: D monthly individual, F monthly variance 2, G monthly status;
-            # J YTD individual, L YTD variance 2, M YTD status.
-            for value, individual_col, consolidated_col, variance_col, status_col in (
-                (monthly, 4, 3, 6, 7), (ytd, 10, 9, 12, 13)
-            ):
-                sheet.cell(row, individual_col).value = value
-                baseline = _number(sheet.cell(row, consolidated_col).value)
-                sheet.cell(row, variance_col).value = (float(baseline - Decimal(value))
-                                                       if value is not None and baseline is not None else None)
-                # Do not mark PASS on an incomplete capture; existing FS vs group status
-                # is preserved in the separate variance 1 columns.
-                status = 'REVIEW REQUIRED'
-                sheet.cell(row, status_col).value = status
-                sheet.cell(row, status_col).fill = PatternFill('solid', fgColor='FFF2CC')
-                sheet.cell(row, status_col).font = Font(color='9C5700', bold=True)
-            results.append((company, line, 'YTD CAPTURED' if ytd is not None else 'REVIEW REQUIRED', note))
-        report.save(report_path)
+            reason = None if monthly is not None and ytd is not None else f'Individual capture: {note}'
+            updates[company][line] = (monthly, ytd, reason)
+            results.append([company, line, 'YTD CAPTURED' if ytd is not None else 'REVIEW REQUIRED', note])
     finally:
         raw.close()
-        report.close()
+
+    for company, company_updates in updates.items():
+        outcome = update_individual_values(report_path, company, company_updates)
+        for result in results:
+            if result[0] == company and outcome.get(result[1]) == 'missing':
+                result[2:] = ['SKIPPED', 'Expected one report row for this line']
+
+    results = [tuple(r) for r in results]
     return {'processed': len(results), 'ytd_populated': sum(x[2] == 'YTD CAPTURED' for x in results),
             'details': results, 'report_path': str(report_path)}
