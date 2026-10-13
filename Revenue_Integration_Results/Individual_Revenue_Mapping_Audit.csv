@@ -1,0 +1,16 @@
+﻿company,fs_line,workbook,worksheet,mapping_values,enabled,status
+ALIV,Consumer Prepaid,E:\Workbooks\Revenue\Cable Bahamas Group_CONSUMER REVENUE.twb,ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD,PAY IN ADVANCE,True,READY FOR CAPTURE
+ALIV,Consumer Postpaid,E:\Workbooks\Revenue\Cable Bahamas Group_CONSUMER REVENUE.twb,ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD,POSTPAID,True,READY FOR CAPTURE
+ALIV,Visitor Roaming,E:\Workbooks\Revenue\Cable Bahamas Group_CONSUMER REVENUE.twb,ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD,VISITOR ROAMING,True,READY FOR CAPTURE
+ALIV,Interconnect,E:\Workbooks\Revenue\Cable Bahamas Group_CONSUMER REVENUE.twb,ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD,INTERCONNECT REVENUE,True,READY FOR CAPTURE
+ALIV,Other,E:\Workbooks\Revenue\Cable Bahamas Group_CONSUMER REVENUE.twb,ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD,,False,PENDING MAPPING
+ALIV,Corporate,E:\Workbooks\Revenue\Cable Bahamas Group_CORPORATE REVENUE.twb,,,False,PENDING MAPPING
+ALIV,Service Revenues,,,,False,CONTROL TOTAL
+CBL,Residential,E:\Workbooks\Revenue\Cable Bahamas Group_CONSUMER REVENUE.twb,CBL RESIDENTIAL REVENUE SUMMARY - Monthly Actuals,,True,READY FOR CAPTURE
+CBL,Corporate - Recurring,E:\Workbooks\Revenue\Cable Bahamas Group_CORPORATE REVENUE.twb,CBL COMMERCIAL REVENUE DETAILS - Monthly Actuals,,False,PENDING MAPPING
+CBL,Corporate - One off,E:\Workbooks\Revenue\Cable Bahamas Group_CORPORATE REVENUE.twb,CBL COMMERCIAL REVENUE DETAILS - Monthly Actuals,CORPORATE POST PAID - ONE OFF,False,PENDING MAPPING
+CBL,Government,E:\Workbooks\Revenue\Cable Bahamas Group_CORPORATE REVENUE.twb,CBL COMMERCIAL REVENUE DETAILS - Monthly Actuals,CORPORATE GOVERNMENT,False,PENDING MAPPING
+CBL,Media,,,,False,PENDING MAPPING
+CBL,Other,,,,False,PENDING MAPPING
+CBL,MSA-ALIV (Intercompany),,,,False,PENDING MAPPING
+CBL,Gross Revenue,,,,False,CONTROL TOTAL
