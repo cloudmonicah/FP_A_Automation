@@ -618,7 +618,13 @@ def save_report(meta: ReportMeta, sheets: list[CompanySheet], path) -> Path:
     workbook = build_report_workbook(meta, sheets)
     try:
         workbook.save(staged)
-        os.replace(staged, path)
+        try:
+            os.replace(staged, path)
+        except PermissionError as exc:
+            raise PermissionError(
+                f"Could not save the report because it is open in another program "
+                f"(usually Excel). Close it and run again.\n\n{path}"
+            ) from exc
     finally:
         workbook.close()
         staged.unlink(missing_ok=True)
