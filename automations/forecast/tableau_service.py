@@ -302,6 +302,14 @@ def open_tableau_workbook(
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
 
+    # Only one workbook open at a time: the automation finds Tableau's window
+    # by title, and leftover workbooks slow Tableau down and confuse that search.
+    from automations.actuals.tableau_desktop_close_service import (
+        close_all_tableau_workbooks,
+    )
+
+    close_all_tableau_workbooks()
+
     # --------------------------------------------------------
     # Use a specific Tableau Desktop executable if supplied.
     # --------------------------------------------------------
@@ -2609,6 +2617,14 @@ def extract_forecast_worksheets(
 
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
+
+    # Only one workbook open at a time: the automation finds Tableau's window
+    # by title, and leftover workbooks slow Tableau down and confuse that search.
+    from automations.actuals.tableau_desktop_close_service import (
+        close_all_tableau_workbooks,
+    )
+
+    close_all_tableau_workbooks()
 
     unique_names = []
     seen = set()

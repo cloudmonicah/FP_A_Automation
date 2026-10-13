@@ -13,6 +13,8 @@ from automations.budget_setup.service import create_initial_forecasts
 from shared import settings
 
 
+from ui.common import get_attention
+
 log = logging.getLogger(__name__)
 
 class BudgetSetupView(tb.Frame):
@@ -445,6 +447,7 @@ class BudgetSetupView(tb.Frame):
             )
 
     def _processing_complete(self, result: dict) -> None:
+        get_attention(self)
         self.progress.stop()
         self.run_button.configure(state="normal")
 
@@ -507,6 +510,7 @@ class BudgetSetupView(tb.Frame):
         self,
         error_message: str,
     ) -> None:
+        get_attention(self, success=False)
         self.progress.stop()
         self.run_button.configure(state="normal")
 
