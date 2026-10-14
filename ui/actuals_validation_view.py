@@ -822,14 +822,17 @@ class ActualsValidationView(tb.Frame):
             closed_period = self._get_closed_period()
 
             if (
-                self.validation_output_paths is not None
-                and self.output_period_var.get()
+                self.validation_output_paths is None
+                or self.output_period_var.get()
                 != self._get_output_period(closed_period)
             ):
-                raise ValueError(
-                    "The reporting period has changed. "
-                    "Click Set Validation Period again."
-                )
+                # Month/year changed (or never confirmed): rebuild the output
+                # folders for the selected period instead of asking the user.
+                # Clear first so a failed refresh can never reuse last month's folders.
+                self.validation_output_paths = None
+                self._confirm_closed_period()
+                if self.validation_output_paths is None:
+                    return
 
             # -------------------------------------------------
             # FINANCIAL STATEMENTS
