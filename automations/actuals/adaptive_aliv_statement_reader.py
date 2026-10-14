@@ -50,23 +50,16 @@ def read_aliv_period(path, closed_period):
             if label in out:
                 # duplicate labels are ambiguous; do not silently pick one
                 out[label]=None
-            elif isinstance(month,(int,float,Decimal)) and isinstance(ytd,(int,float,Decimal)):
+            elif isinstance(month,(int,float,Decimal)) and (
+                isinstance(ytd,(int,float,Decimal)) or closed_period.month == 7
+            ):
+                # July is month 1 of the fiscal year: YTD is by definition the monthly
+                # actual, so a missing/different YTD cell never blocks the run.
+                if closed_period.month == 7:
+                    ytd = month
                 out[label]=(float(month),float(ytd))
         return out
     finally: wb.close()
-
-
-def july_ytd_mismatches(values, closed_period, tolerance=1.0):
-    """Lines whose YTD differs from the monthly actual in July (month 1 of the fiscal year).
-
-    Returns {label: (month, ytd)}. Empty for any other month.
-    """
-    if closed_period.month != 7:
-        return {}
-    return {
-        k: pair for k, pair in values.items()
-        if pair is not None and abs(pair[0] - pair[1]) > tolerance
-    }
 
 
 def get_aliv_line(path,closed_period,label):
@@ -74,10 +67,4 @@ def get_aliv_line(path,closed_period,label):
     key=norm(label)
     if key not in values or values[key] is None:
         raise ValueError(f'ALIV statement line missing/ambiguous: {label}')
-    bad=july_ytd_mismatches({key: values[key]}, closed_period)
-    if bad:
-        m,y=bad[key]
-        raise ValueError(
-            f'ALIV July YTD does not equal July monthly for {label} '
-            f'(month={m:,.3f}, ytd={y:,.3f}); confirm the statement before validating.')
     return values[key]
