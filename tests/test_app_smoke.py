@@ -28,3 +28,27 @@ def test_every_page_opens(tmp_path, monkeypatch):
     finally:
         app.app.destroy()
     assert errors == []
+
+
+def test_finish_notification(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    import ui.common as common
+    from app import FinanceAutomationApp
+
+    asked = []
+    monkeypatch.setattr(common.messagebox, "askyesno", lambda *a, **k: asked.append(a) or False)
+    monkeypatch.setattr(common.messagebox, "showerror", lambda *a, **k: asked.append(a))
+    report = tmp_path / "report.xlsx"
+    report.write_text("x")
+
+    app = FinanceAutomationApp()
+    try:
+        app.show_page("actuals")
+        view = app.workspace.winfo_children()[0]
+        view._finish_actuals_validation({"Revenue": {"overall_status": "PASS", "final_report": str(report)}})
+        view._actuals_validation_failed("boom")
+        app.app.update()
+    finally:
+        app.app.destroy()
+    assert "Revenue validation finished" in asked[0][0]
+    assert "boom" in asked[1][1]

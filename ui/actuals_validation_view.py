@@ -883,6 +883,9 @@ class ActualsValidationView(tb.Frame):
             # LOCK GUI
             # -------------------------------------------------
 
+            if not confirm_close_tableau(self):
+                return
+
             self.validation_running = True
             self.active_category = category
 
@@ -971,6 +974,8 @@ class ActualsValidationView(tb.Frame):
                 parent=self.winfo_toplevel(),
             ):
                 return
+            if not confirm_close_tableau(self):
+                return
             from shutil import copy2
             from datetime import datetime
 
@@ -1050,6 +1055,11 @@ class ActualsValidationView(tb.Frame):
         self.validation_progress_var.set(
             f"Individual OPEX finished: {result['status']}. "
             "Consolidated, Direct Cost and Revenue were not run."
+        )
+        notify_finished(
+            self,
+            "Individual OPEX finished",
+            f"Individual OPEX is complete.\n\nOverall result: {status}",
         )
 
     # =========================================================
@@ -1434,7 +1444,13 @@ class ActualsValidationView(tb.Frame):
         )
         report = result.get("final_report")
         self.validation_progress_var.set(
-            f"{category}: {'A–O final report: ' + report if report else 'Final report was not generated.'}"
+            f"{category}: {'Final report: ' + report if report else 'Final report was not generated.'}"
+        )
+        notify_finished(
+            self,
+            f"{category} validation finished",
+            f"{category} validation is complete.\n\nOverall result: {overall}",
+            open_path=report,
         )
 
     # =========================================================
@@ -1470,10 +1486,11 @@ class ActualsValidationView(tb.Frame):
             "Actuals Validation stopped because an error occurred."
         )
 
-        messagebox.showerror(
+        notify_finished(
+            self,
             "Actuals Validation Error",
-            error_message,
-            parent=self.winfo_toplevel(),
+            f"The validation stopped because of an error:\n\n{error_message}",
+            success=False,
         )
 
     # =========================================================

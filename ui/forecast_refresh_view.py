@@ -35,6 +35,8 @@ MONTH_LOOKUP = {
 }
 
 
+from ui.common import confirm_close_tableau, get_attention
+
 log = logging.getLogger(__name__)
 
 class ForecastRefreshView(tb.Frame):
@@ -527,6 +529,8 @@ class ForecastRefreshView(tb.Frame):
         )
         if not confirmed:
             return
+        if not confirm_close_tableau(self):
+            return
 
         self._set_busy(True)
         self.status_var.set("Preparing Monthly Forecast")
@@ -560,6 +564,7 @@ class ForecastRefreshView(tb.Frame):
             self.after(0, lambda e=exc: self._process_failed(e))
 
     def _prepare_complete(self, result: dict) -> None:
+        get_attention(self)
         period = result["period"]
         excel = result["excel"]
 
@@ -643,6 +648,7 @@ class ForecastRefreshView(tb.Frame):
             self.after(0, lambda e=exc: self._process_failed(e))
 
     def _population_complete(self, result: dict) -> None:
+        get_attention(self)
         failed = result["failed"]
         self.worksheets_updated_var.set(str(result["worksheets_updated"]))
         self.files_created_var.set(str(result["workbooks_updated"]))
@@ -719,6 +725,8 @@ class ForecastRefreshView(tb.Frame):
         )
         if not confirmed:
             return
+        if not confirm_close_tableau(self):
+            return
 
         self._set_busy(True)
         self.status_var.set("Validating Final Forecast")
@@ -748,6 +756,7 @@ class ForecastRefreshView(tb.Frame):
             self.after(0, lambda e=exc: self._process_failed(e))
 
     def _validation_complete(self, result: dict) -> None:
+        get_attention(self)
         passed = int(result.get("passed", 0))
         failed = int(result.get("failed", 0))
         action = int(result.get("action_required", 0))
@@ -804,6 +813,7 @@ class ForecastRefreshView(tb.Frame):
     # =========================================================
 
     def _process_failed(self, error: Exception) -> None:
+        get_attention(self, success=False)
         self.progress_var.set(0)
         self.status_var.set("Process Failed")
         self.status_description_var.set(f"{type(error).__name__}: {error}")

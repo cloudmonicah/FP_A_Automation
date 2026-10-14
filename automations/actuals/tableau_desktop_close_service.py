@@ -450,3 +450,82 @@ def close_tableau_forecast_workbook(
         print("=" * 70)
 
         return result
+
+
+# ============================================================
+# CLOSE EVERY OPEN TABLEAU WORKBOOK
+# ============================================================
+
+
+def _is_tableau_process(process_id) -> bool:
+    try:
+        from pywinauto.application import process_module
+
+        return Path(process_module(process_id)).name.lower() == "tableau.exe"
+    except Exception:
+        # If the process can't be inspected, rely on the window title alone.
+        return True
+
+
+def list_open_tableau_workbooks() -> list[str]:
+    """Titles of the open Tableau Desktop workbook windows ("Tableau - <name>")."""
+    from pywinauto import Desktop
+
+    titles = []
+    for window in Desktop(backend="uia").windows():
+        try:
+            title = window.window_text()
+            if not _normalize_text(title).startswith("tableau - "):
+                continue
+            if not _is_tableau_process(window.process_id()):
+                continue
+        except Exception:
+            continue
+        titles.append(title)
+    return titles
+
+
+def close_all_tableau_workbooks(wait_seconds: float = 15.0) -> dict:
+    """Close every open Tableau workbook WITHOUT saving.
+
+    Called before each workbook is opened, so only one Tableau workbook is
+    ever open during a run. Problems are returned as a warning, not raised.
+    """
+    from pywinauto import Desktop
+
+    result = {"closed": [], "warning": None}
+    try:
+        titles = list_open_tableau_workbooks()
+        if not titles:
+            return result
+
+        print(f"Closing {len(titles)} open Tableau workbook(s) before opening the next one...")
+        for window in Desktop(backend="uia").windows():
+            try:
+                title = window.window_text()
+                if title in titles:
+                    window.close()
+                    time.sleep(0.8)
+                    _handle_save_dialog()
+            except Exception:
+                continue
+
+        deadline = time.time() + wait_seconds
+        remaining = titles
+        while time.time() < deadline:
+            remaining = list_open_tableau_workbooks()
+            if not remaining:
+                break
+            _handle_save_dialog()
+            time.sleep(0.5)
+
+        result["closed"] = [t for t in titles if t not in remaining]
+        if remaining:
+            result["warning"] = "These Tableau workbooks did not close: " + ", ".join(remaining)
+            print("[WARNING] " + result["warning"])
+        else:
+            print("All Tableau workbooks closed.")
+    except Exception as exc:
+        result["warning"] = f"Could not close open Tableau workbooks: {type(exc).__name__}: {exc}"
+        print("[WARNING] " + result["warning"])
+    return result

@@ -68,8 +68,8 @@ BLOCK_HEADERS = (
     "Financial Statement",
     "Consolidated Tableau",
     "Individual Tableau",
-    "V1: Consolidated − FS",
-    "V2: Individual − Consolidated",
+    "V1\nConsolidated − FS",
+    "V2\nIndividual − Consolidated",
     "Status",
     "Notes",
 )
@@ -338,6 +338,34 @@ def _setup_print(ws, last_col, repeat_rows):
     ws.oddFooter.right.text = "Page &P of &N"
 
 
+# Column widths on company sheets: line name, status and notes columns are wider.
+COLUMN_WIDTHS = {1: 32, 7: 18, 8: 46, 14: 18, 15: 46}
+
+
+def _row_height(ws, row) -> float:
+    """Excel does not resize rows for wrapped text written by openpyxl, so
+    estimate the lines each wrapped cell needs and size the row to fit."""
+    lines = 1
+    for col in (1, MONTHLY_COL + 5, MONTHLY_COL + 6, YTD_COL + 5, YTD_COL + 6):
+        text = ws.cell(row, col).value
+        if not text:
+            continue
+        width = ws.column_dimensions[get_column_letter(col)].width or 10
+        chars_per_line = max(int(width * 1.15), 1)  # notes use a 9pt font
+        needed = 0
+        for part in str(text).split("\n"):
+            needed += 1
+            length = 0
+            for word in part.split():
+                if length and length + 1 + len(word) > chars_per_line:
+                    needed += 1
+                    length = len(word)
+                else:
+                    length += (1 if length else 0) + len(word)
+        lines = max(lines, needed)
+    return max(20, 13 * lines + 7)
+
+
 def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 90
@@ -397,7 +425,9 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
             cell.fill = _fill(color)
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     ws.cell(HEADER_ROW, SOURCE_NOTE_COL, "Source note")
-    ws.row_dimensions[HEADER_ROW].height = 48
+    ws.row_dimensions[HEADER_ROW].height = 58
+    for col in range(1, LAST_COL + 1):
+        ws.column_dimensions[get_column_letter(col)].width = COLUMN_WIDTHS.get(col, 15)
 
     # Data rows
     row = FIRST_DATA_ROW
@@ -426,13 +456,15 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
             note_parts = [values.note()]
             if start == MONTHLY_COL and line.source_note:
                 note_parts.insert(0, line.source_note)
-            note = ws.cell(row, start + 6, "; ".join(p for p in note_parts if p) or None)
+            note_text = "; ".join(p.strip().rstrip(".") for p in note_parts if p and p.strip())
+            note = ws.cell(row, start + 6, note_text or None)
             note.font = _font(size=9, color="44546A")
             note.alignment = Alignment(vertical="center", wrap_text=True)
             if band:
                 note.fill = band
 
         ws.cell(row, SOURCE_NOTE_COL, line.source_note or None)
+        ws.row_dimensions[row].height = _row_height(ws, row)
 
         for col in range(1, LAST_COL + 1):
             cell = ws.cell(row, col)
@@ -443,17 +475,13 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
             )
         row += 1
 
-    last_row = max(row - 1, FIRST_DATA_ROW)
     for col in range(1, LAST_COL + 1):
         ws.cell(HEADER_ROW, col).border = Border(left=MEDIUM if col == YTD_COL else None)
 
-    widths = {1: 34, 7: 16, 8: 34, 14: 16, 15: 34}
-    for col in range(1, LAST_COL + 1):
-        ws.column_dimensions[get_column_letter(col)].width = widths.get(col, 14)
     ws.column_dimensions[get_column_letter(SOURCE_NOTE_COL)].hidden = True
 
+    # No filter buttons: on a sheet this size they only cover the headers.
     ws.freeze_panes = ws.cell(FIRST_DATA_ROW, 2)
-    ws.auto_filter.ref = f"A{HEADER_ROW}:{get_column_letter(LAST_COL)}{last_row}"
     _setup_print(ws, LAST_COL, f"{5}:{HEADER_ROW}")
 
 
