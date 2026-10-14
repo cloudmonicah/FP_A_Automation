@@ -13,6 +13,6 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - run: pip install -r requirements.txt pytest
+      - run: pip install -r requirements.txt pytest pytest-github-actions-annotate-failures
       - run: python -m compileall -q automations shared ui scripts app.py main.py config.py
       - run: python -m pytest -q
