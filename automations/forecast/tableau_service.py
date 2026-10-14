@@ -361,7 +361,6 @@ def _Desktop(*args, **kwargs):
 from io import StringIO
 import csv
 import time
-import tkinter as tk
 
 
 from datetime import datetime
@@ -675,16 +674,32 @@ def _get_tableau_window(
 
 
 def _clear_clipboard() -> None:
+    """Empty the Windows clipboard with the native API.
 
-    root = tk.Tk()
-    root.withdraw()
+    This runs on the background worker thread, so it must NOT create a Tk
+    root: a Tk interpreter made on a worker thread and destroyed on another
+    thread kills the whole app with "Tcl_AsyncDelete: async handler deleted
+    by the wrong thread".
+    """
+    import ctypes
+    from ctypes import wintypes
 
-    try:
-        root.clipboard_clear()
-        root.update()
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.restype = wintypes.BOOL
 
-    finally:
-        root.destroy()
+    for _ in range(30):
+        if user32.OpenClipboard(None):
+            try:
+                user32.EmptyClipboard()
+            finally:
+                user32.CloseClipboard()
+            return
+        time.sleep(0.1)
+
+    raise RuntimeError("Could not open the Windows clipboard to clear it.")
 
 
 # ============================================================
