@@ -23,8 +23,8 @@ from automations.actuals.direct_cost_validation_service import (
     run_live_direct_cost_validation,
 )
 
-
 log = logging.getLogger(__name__)
+
 
 class ActualsValidationView(tb.Frame):
 
@@ -806,7 +806,11 @@ class ActualsValidationView(tb.Frame):
                 parent=self.winfo_toplevel(),
             )
             return
-        selected_key = {"OPEX": "opex", "Direct Cost": "direct_cost", "Revenue": "revenue"}[category]
+        selected_key = {
+            "OPEX": "opex",
+            "Direct Cost": "direct_cost",
+            "Revenue": "revenue",
+        }[category]
         if (
             not Path(self.selected_tableau_sources[selected_key]).is_file()
             or Path(self.selected_tableau_sources[selected_key]).suffix.lower()
@@ -827,14 +831,16 @@ class ActualsValidationView(tb.Frame):
             closed_period = self._get_closed_period()
 
             if (
-                self.validation_output_paths is not None
-                and self.output_period_var.get()
+                self.validation_output_paths is None
+                or self.output_period_var.get()
                 != self._get_output_period(closed_period)
             ):
-                raise ValueError(
-                    "The reporting period has changed. "
-                    "Click Set Validation Period again."
+                self.validation_output_paths = (
+                    None  # never fall back to last month's folders
                 )
+                self._confirm_closed_period()
+                if self.validation_output_paths is None:
+                    return
 
             # -------------------------------------------------
             # FINANCIAL STATEMENTS
@@ -890,7 +896,11 @@ class ActualsValidationView(tb.Frame):
                 state="disabled",
             )
 
-            {"OPEX": self.opex_status_var, "Direct Cost": self.direct_cost_status_var, "Revenue": self.revenue_status_var}[category].set("RUNNING")
+            {
+                "OPEX": self.opex_status_var,
+                "Direct Cost": self.direct_cost_status_var,
+                "Revenue": self.revenue_status_var,
+            }[category].set("RUNNING")
 
             self.overall_validation_status_var.set("RUNNING")
 
@@ -1057,21 +1067,31 @@ class ActualsValidationView(tb.Frame):
         selected = self.revenue_tableau_path_var.get().strip()
         source = Path(selected)
         if not source.is_file() or source.suffix.lower() != ".twb":
-            messagebox.showerror("Revenue source", "Select a valid consolidated Revenue .twb file.", parent=self.winfo_toplevel())
+            messagebox.showerror(
+                "Revenue source",
+                "Select a valid consolidated Revenue .twb file.",
+                parent=self.winfo_toplevel(),
+            )
             return
         try:
             period = self._get_closed_period()
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
-            messagebox.showerror("Reporting period", str(exc), parent=self.winfo_toplevel())
+            messagebox.showerror(
+                "Reporting period", str(exc), parent=self.winfo_toplevel()
+            )
             return
         self.validation_running = True
         self.run_revenue_button.configure(state="disabled")
         self.run_validation_button.configure(state="disabled")
         self.run_direct_cost_button.configure(state="disabled")
         self.revenue_status_var.set("RUNNING")
-        self.validation_progress_var.set("Capturing consolidated Revenue MONTH and YTD...")
-        threading.Thread(target=self._revenue_live_test_worker, args=(source, period), daemon=True).start()
+        self.validation_progress_var.set(
+            "Capturing consolidated Revenue MONTH and YTD..."
+        )
+        threading.Thread(
+            target=self._revenue_live_test_worker, args=(source, period), daemon=True
+        ).start()
 
     def _revenue_live_test_worker(self, source, period):
         import csv
@@ -1081,8 +1101,12 @@ class ActualsValidationView(tb.Frame):
         from uuid import uuid4
         from automations.actuals.revenue_validation_service import prepare_revenue_copy
         from automations.forecast.tableau_service import open_tableau_workbook
-        from automations.actuals.tableau_desktop_export_service import get_tableau_crosstab_text
-        from automations.actuals.tableau_desktop_close_service import close_tableau_forecast_workbook
+        from automations.actuals.tableau_desktop_export_service import (
+            get_tableau_crosstab_text,
+        )
+        from automations.actuals.tableau_desktop_close_service import (
+            close_tableau_forecast_workbook,
+        )
 
         worksheet = "CBL FS Rollup View Group Monthly Revenue YTD_SUMMARY"
         from shared.settings import user_dir
@@ -1091,23 +1115,34 @@ class ActualsValidationView(tb.Frame):
         try:
             folder.mkdir(parents=True, exist_ok=True)
             for basis in ("MONTH", "YTD"):
-                temporary = source.with_name(f"{source.stem}_Revenue_GUI_{uuid4().hex[:8]}.twb")
+                temporary = source.with_name(
+                    f"{source.stem}_Revenue_GUI_{uuid4().hex[:8]}.twb"
+                )
                 opened = False
                 try:
                     prepare_revenue_copy(source, temporary, [worksheet], period, basis)
                     open_tableau_workbook(tableau_workbook_path=str(temporary))
                     opened = True
                     time.sleep(8)
-                    data = get_tableau_crosstab_text(worksheet_name=worksheet, tableau_workbook_path=str(temporary))
+                    data = get_tableau_crosstab_text(
+                        worksheet_name=worksheet, tableau_workbook_path=str(temporary)
+                    )
                     if not data.strip():
                         raise ValueError(f"{basis} capture returned empty data")
                     rows = list(csv.reader(StringIO(data), delimiter="\t"))
-                    (folder / f"Revenue_Group_{basis}.tsv").write_text(data, encoding="utf-8-sig")
-                    print(f"[REVENUE GUI] {basis}: {len(rows)} rows; saved to {folder}", flush=True)
+                    (folder / f"Revenue_Group_{basis}.tsv").write_text(
+                        data, encoding="utf-8-sig"
+                    )
+                    print(
+                        f"[REVENUE GUI] {basis}: {len(rows)} rows; saved to {folder}",
+                        flush=True,
+                    )
                 finally:
                     if opened:
                         try:
-                            close_tableau_forecast_workbook(tableau_workbook_path=str(temporary))
+                            close_tableau_forecast_workbook(
+                                tableau_workbook_path=str(temporary)
+                            )
                         except Exception as exc:
                             log.exception("Error in %s", type(self).__name__)
                             print(f"[REVENUE GUI] Close warning: {exc}", flush=True)
@@ -1119,6 +1154,7 @@ class ActualsValidationView(tb.Frame):
 
     def _revenue_live_test_finished(self, folder, error):
         from tkinter import messagebox
+
         self.validation_running = False
         self.run_revenue_button.configure(state="normal")
         self.run_validation_button.configure(state="normal")
@@ -1126,11 +1162,17 @@ class ActualsValidationView(tb.Frame):
         if error:
             self.revenue_status_var.set("ERROR")
             self.validation_progress_var.set(f"Revenue capture failed: {error}")
-            messagebox.showerror("Revenue live test", error, parent=self.winfo_toplevel())
+            messagebox.showerror(
+                "Revenue live test", error, parent=self.winfo_toplevel()
+            )
         else:
             self.revenue_status_var.set("REVIEW REQUIRED")
             self.validation_progress_var.set(f"Revenue raw captures saved: {folder}")
-            messagebox.showinfo("Revenue capture completed", f"MONTH and YTD raw data saved to:\n{folder}\n\nAmounts are NOT yet reconciled.", parent=self.winfo_toplevel())
+            messagebox.showinfo(
+                "Revenue capture completed",
+                f"MONTH and YTD raw data saved to:\n{folder}\n\nAmounts are NOT yet reconciled.",
+                parent=self.winfo_toplevel(),
+            )
 
     # =========================================================
     # BACKGROUND VALIDATION WORKER
@@ -1222,12 +1264,19 @@ class ActualsValidationView(tb.Frame):
                     f"Captured {individual['captured']}/{individual['total']} individual views; see Tableau Raw Copies.",
                 )
             elif category == "Revenue":
-                from automations.actuals.revenue_validation_service import run_live_revenue_validation
+                from automations.actuals.revenue_validation_service import (
+                    run_live_revenue_validation,
+                )
+
                 group_path = Path(self.selected_tableau_sources["revenue"])
                 revenue_sources = {
                     "group": str(group_path),
-                    "consumer": str(group_path.parent / "Cable Bahamas Group_CONSUMER REVENUE.twb"),
-                    "corporate": str(group_path.parent / "Cable Bahamas Group_CORPORATE REVENUE.twb"),
+                    "consumer": str(
+                        group_path.parent / "Cable Bahamas Group_CONSUMER REVENUE.twb"
+                    ),
+                    "corporate": str(
+                        group_path.parent / "Cable Bahamas Group_CORPORATE REVENUE.twb"
+                    ),
                 }
                 result = run_live_revenue_validation(
                     aliv_fs_path=aliv_fs_path,
@@ -1253,7 +1302,10 @@ class ActualsValidationView(tb.Frame):
                 forecast_start=self.selected_tableau_settings.get("forecast_start"),
             )
             if category == "Direct Cost":
-                from automations.actuals.direct_cost_individual_merge import merge_direct_cost_crosstabs
+                from automations.actuals.direct_cost_individual_merge import (
+                    merge_direct_cost_crosstabs,
+                )
+
                 merge_result = merge_direct_cost_crosstabs(
                     report_path=result["final_report"],
                     crosstab_path=individual["crosstab_workbook"],

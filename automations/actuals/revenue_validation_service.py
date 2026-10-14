@@ -284,22 +284,17 @@ def source_values(label, rows):
             },
         }
     routes = {
-        "Government": ("ALIV BUSINESS", "CORPORATE GOVERNMENT", "Total"),
-        "Other": ("HFC FIXED NETWORK CONSUMER", "OTHER SUBSCRIBER", "Total"),
-        "MSA-ALIV": ("INTERCOMPANY", "OTHER SUBSCRIBER", "Total"),
-        "Media": ("MEDIA", "CORPORATE POST PAID RECURRING", "Total"),
-        "Gross Revenue": ("Grand Total", "Total", "Total"),
+        "Government": ("ALIV BUSINESS", "CORPORATE GOVERNMENT"),
+        "Other": ("HFC FIXED NETWORK CONSUMER", "OTHER SUBSCRIBER"),
+        "MSA-ALIV": ("INTERCOMPANY", "OTHER SUBSCRIBER"),
+        "Media": ("MEDIA", "CORPORATE POST PAID RECURRING"),
+        "Gross Revenue": ("Grand Total", "Total"),
     }
     return {
         "CBL": {
             line: unique(
                 rows,
-                **dict(
-                    zip(
-                        ["GL Bus Code Name", "GL FS Category", "GL Account Mapping"],
-                        route,
-                    )
-                ),
+                **dict(zip(["GL Bus Code Name", "GL FS Category"], route)),
             )
             for line, route in routes.items()
         }
@@ -575,6 +570,7 @@ def run_live_revenue_validation(
         from automations.actuals.report_builder import PeriodValues
         from automations.actuals.report_builder import variance as report_variance
         from openpyxl.comments import Comment
+
         for company in ("ALIV", "CBL"):
             sheet = report[f"{company} Revenue"]
             # This is the capture (A:S) workbook; the final layout is built later.
@@ -594,15 +590,25 @@ def run_live_revenue_validation(
                     amount_000 = report_rounded(
                         Decimal(str(matched[0][1])) / Decimal("1000")
                     )
-                    fs_col, group_col, individual_col, fs_diff_col, group_diff_col, status_col = (
-                        (2, 3, 12, 13, 14, 15) if basis == "MONTH"
+                    (
+                        fs_col,
+                        group_col,
+                        individual_col,
+                        fs_diff_col,
+                        group_diff_col,
+                        status_col,
+                    ) = (
+                        (2, 3, 12, 13, 14, 15)
+                        if basis == "MONTH"
                         else (8, 9, 16, 17, 18, 19)
                     )
                     sheet.cell(row, individual_col, amount_000)
                     fs_value = sheet.cell(row, fs_col).value
                     group_value = sheet.cell(row, group_col).value
                     sheet.cell(row, fs_diff_col, report_variance(fs_value, amount_000))
-                    sheet.cell(row, group_diff_col, report_variance(group_value, amount_000))
+                    sheet.cell(
+                        row, group_diff_col, report_variance(group_value, amount_000)
+                    )
                     status_cell(
                         sheet.cell(row, status_col),
                         PeriodValues(fs_value, group_value, amount_000).status,

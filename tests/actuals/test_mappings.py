@@ -28,7 +28,12 @@ def test_actuals_mapping_rows_are_complete_and_unique(name):
 
 
 @pytest.mark.parametrize(
-    "rows", [mapping.OPEX_MAPPINGS, mapping.INDIVIDUAL_DIRECT_COST_MAPPINGS, mapping.INDIVIDUAL_REVENUE_MAPPINGS]
+    "rows",
+    [
+        mapping.OPEX_MAPPINGS,
+        mapping.INDIVIDUAL_DIRECT_COST_MAPPINGS,
+        mapping.INDIVIDUAL_REVENUE_MAPPINGS,
+    ],
 )
 def test_workbooks_live_under_the_configured_root(rows):
     root = PureWindowsPath(settings.get("workbooks_root").replace("/", "\\"))
@@ -44,3 +49,11 @@ def test_forecast_routes_are_complete():
     for route in FORECAST_ROUTES:
         assert required <= route.keys(), route
         assert route["workbook"].endswith(".xlsx"), route
+
+
+def test_individual_revenue_lines_exist_in_consolidated_mappings():
+    consolidated_lines = {
+        (row["company"], row["fs_line"]) for row in mapping.REVENUE_MAPPINGS
+    }
+    for row in mapping.INDIVIDUAL_REVENUE_MAPPINGS:
+        assert (row["company"], row["fs_line"]) in consolidated_lines, row

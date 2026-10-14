@@ -22,7 +22,9 @@ OPEX_MAPPINGS = [
         "fs_line": "General and Administration",
         "tableau_category": "GENERAL AND ADMINISTRATION",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "ALIV Gen & Admin_Finance.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "ALIV Gen & Admin_Finance.twb"
+        ),
         "individual_tableau_worksheet": "Monthly Actual v Budget by Sub account",
         "individual_actuals_enabled": True,
     },
@@ -68,7 +70,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Information Technology",
         "tableau_category": "INFORMATION TECHNOLOGY",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Information Technology.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Information Technology.twb"
+        ),
         "individual_tableau_worksheet": "ALIV Monthly Subaccount Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -86,7 +90,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Commercial and Product Development",
         "tableau_category": "COMMERCIAL AND PRODUCT DEVELOPMENT",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Consumer Marketing & Product Development.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Consumer Marketing & Product Development.twb"
+        ),
         "individual_tableau_worksheet": "PRODUCT DEVELOPMENT (CBL & ALIV) - By Subaccount - Monthly Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -95,7 +101,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Marketing",
         "tableau_category": "MARKETING",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Consumer Marketing & Product Development.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Consumer Marketing & Product Development.twb"
+        ),
         "individual_tableau_worksheet": "MARKETING (ALIV) - By Subaccount - Monthly Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -113,7 +121,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Contact Center",
         "tableau_category": "CUSTOMER EXPERIENCE & CONTACT CENTER",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Customer Experience & Contact Center.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Customer Experience & Contact Center.twb"
+        ),
         "individual_tableau_worksheet": "ALIV Monthly Trend by Sub Account",
         "individual_actuals_enabled": True,
     },
@@ -122,7 +132,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Roaming",
         "tableau_category": "ROAMING",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Consumer Marketing & Product Development.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Consumer Marketing & Product Development.twb"
+        ),
         "individual_tableau_worksheet": "ROAMING - By Subaccount - Monthly Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -167,7 +179,9 @@ OPEX_MAPPINGS = [
         "fs_line": "General & Administration",
         "tableau_category": "GENERAL AND ADMINISTRATION",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "CBL Gen & Admin_Finance.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "CBL Gen & Admin_Finance.twb"
+        ),
         "individual_tableau_worksheet": "Monthly YTD Actual v Budget by Sub account",
         "individual_actuals_enabled": True,
     },
@@ -212,7 +226,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Information Technology",
         "tableau_category": "INFORMATION TECHNOLOGY",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Information Technology.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Information Technology.twb"
+        ),
         "individual_tableau_worksheet": "CBL Monthly Subaccount Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -230,7 +246,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Commercial & Product Development",
         "tableau_category": "COMMERCIAL AND PRODUCT DEVELOPMENT",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Consumer Marketing & Product Development.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Consumer Marketing & Product Development.twb"
+        ),
         "individual_tableau_worksheet": "PRODUCT DEVELOPMENT (CBL & ALIV) - By Subaccount - Monthly Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -239,7 +257,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Marketing",
         "tableau_category": "MARKETING",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Consumer Marketing & Product Development.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Consumer Marketing & Product Development.twb"
+        ),
         "individual_tableau_worksheet": "MARKETING (CBL) - By Subaccount - Monthly Actual v Budget",
         "individual_actuals_enabled": True,
     },
@@ -266,7 +286,9 @@ OPEX_MAPPINGS = [
         "fs_line": "Customer Experience & Contact Center",
         "tableau_category": "CUSTOMER EXPERIENCE & CONTACT CENTER",
         "aggregation": AGG_DIRECT,
-        "individual_tableau_workbook": workbook_path("OPEX", "Customer Experience & Contact Center.twb"),
+        "individual_tableau_workbook": workbook_path(
+            "OPEX", "Customer Experience & Contact Center.twb"
+        ),
         "individual_tableau_worksheet": "CBL Monthly Trend by Sub Account",
         "individual_actuals_enabled": True,
     },
@@ -558,15 +580,6 @@ REVENUE_MEDIA_WORKBOOK = rf"{_REVENUE_FOLDER}\Cable Bahamas Group_MEDIA REVENUE.
 
 # ============================================================
 # CONSOLIDATED REVENUE MAPPINGS
-#
-# Tableau columns:
-#   GL Bus Code Name
-#   GL FS Category
-#   Aug-26
-#   Grand Total
-#
-# IMPORTANT:
-# Tableau categories not yet confirmed remain unmapped.
 # ============================================================
 
 REVENUE_MAPPINGS = [
@@ -647,7 +660,7 @@ REVENUE_MAPPINGS = [
     },
     {
         "company": "CBL",
-        "fs_line": "MSA-ALIV (Intercompany)",
+        "fs_line": "MSA-ALIV",
         "tableau_categories": [],
         "aggregation": AGG_PENDING,
     },
@@ -807,7 +820,7 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "fs_line": "Media",
         "individual_tableau_workbook": REVENUE_MEDIA_WORKBOOK,
         "individual_tableau_worksheet": (" Monthly YTD Actual v Budget by Sub account"),
-        "tableau_categories": ["MEDIA REVENUE"],
+        "tableau_categories": [],
         "aggregation": AGG_PENDING,
         "individual_actuals_enabled": True,
     },
@@ -820,7 +833,7 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
     },
     {
         "company": "CBL",
-        "fs_line": "MSA-ALIV (Intercompany)",
+        "fs_line": "MSA-ALIV",
         "tableau_categories": [],
         "aggregation": AGG_PENDING,
         "individual_actuals_enabled": True,
