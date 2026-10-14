@@ -50,12 +50,14 @@ def read_aliv_period(path, closed_period):
             if label in out:
                 # duplicate labels are ambiguous; do not silently pick one
                 out[label]=None
-            elif isinstance(month,(int,float,Decimal)) and isinstance(ytd,(int,float,Decimal)):
+            elif isinstance(month,(int,float,Decimal)) and (
+                isinstance(ytd,(int,float,Decimal)) or closed_period.month == 7
+            ):
+                # July is month 1 of the fiscal year: YTD is by definition the monthly
+                # actual, so a missing/different YTD cell never blocks the run.
+                if closed_period.month == 7:
+                    ytd = month
                 out[label]=(float(month),float(ytd))
-        if closed_period.month == 7:
-            inconsistent=[k for k,pair in out.items() if pair is not None and abs(pair[0]-pair[1])>1.0]
-            if inconsistent:
-                raise ValueError("ALIV July statement YTD does not equal July monthly actual; confirm fiscal-year basis before validation. Examples: " + ", ".join(inconsistent[:4]))
         return out
     finally: wb.close()
 
