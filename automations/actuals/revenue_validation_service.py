@@ -634,6 +634,7 @@ def run_live_revenue_validation(
     values = {basis: {"ALIV": {}, "CBL": {}} for basis in ("MONTH", "YTD")}
     individual_values = {basis: {"ALIV": {}, "CBL": {}} for basis in values}
     sequence = 0
+    filters_used = {}
     for basis in ("MONTH", "YTD"):
         for key in ("consumer", "corporate", "group", "finance", "media"):
             source = Path(tableau_sources[key])
@@ -661,6 +662,7 @@ def run_live_revenue_validation(
                                 f"{label}: {type(exc).__name__}: {exc}"
                             )
                     continue
+                filters_used[(basis, source.name)] = filters
                 print(f"Revenue {basis}: saved {source.name} | {filters}", flush=True)
                 opener(tableau_workbook_path=str(source))
                 opened = True
@@ -876,6 +878,17 @@ def run_live_revenue_validation(
         "validation_workbook": str(path),
         "raw_tableau_workbook": str(audit),
         "log_file": str(log),
+        "forecast_start": start,
+        "forecast_type": next(iter(filters_used.values()), {}).get("Forecast Type"),
+        "filters_used": [
+            {"Basis": b, "Workbook": w, **f} for (b, w), f in filters_used.items()
+        ],
+        "capture_notes": [
+            {"Basis": basis, "Company": company, "Note": note}
+            for basis in notes
+            for company in notes[basis]
+            for note in notes[basis][company]
+        ],
         "companies": compared["MONTH"],
         "ytd_companies": compared["YTD"],
     }

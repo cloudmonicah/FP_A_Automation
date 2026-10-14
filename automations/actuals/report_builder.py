@@ -867,3 +867,45 @@ def report_status(path) -> str:
         return STATUS_PENDING
     finally:
         workbook.close()
+
+
+def add_run_notes_sheet(path, *, filters=(), notes=()) -> None:
+    """Add a 'Run Notes' tab: filters set in each Tableau workbook and capture problems.
+
+    Formulas in the report are left untouched (the file is opened normally,
+    not value-only).
+    """
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    workbook = load_workbook(path)
+    try:
+        if "Run Notes" in workbook.sheetnames:
+            del workbook["Run Notes"]
+        ws = workbook.create_sheet("Run Notes", 1)
+        ws.sheet_properties.tabColor = "243F5C"
+
+        def block(row, title, rows):
+            ws.cell(row, 1, title).font = Font(bold=True, size=12, color="243F5C")
+            row += 1
+            if not rows:
+                ws.cell(row, 1, "None")
+                return row + 2
+            headers = list(dict.fromkeys(k for r in rows for k in r))
+            for c, h in enumerate(headers, 1):
+                cell = ws.cell(row, c, h)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="703070")
+                cell.alignment = Alignment(horizontal="center")
+            for r in rows:
+                row += 1
+                for c, h in enumerate(headers, 1):
+                    ws.cell(row, c, str(r.get(h, "")))
+            return row + 2
+
+        nxt = block(1, "Filters set in the source Tableau workbooks (saved before each capture)", list(filters))
+        block(nxt, "Capture problems (a missing value means its capture failed; see the note)", list(notes))
+        for col, width in zip("ABCDEFGH", (14, 46, 18, 22, 22, 30, 40, 40)):
+            ws.column_dimensions[col].width = width
+        workbook.save(path)
+    finally:
+        workbook.close()

@@ -1310,11 +1310,22 @@ class ActualsValidationView(tb.Frame):
             )
 
             source = Path(result["validation_workbook"])
+            # Revenue reports the values it actually set in Tableau.
             result["final_report"] = finalize_actuals_report_in_place(
                 source,
-                forecast_type=self.selected_tableau_settings.get("forecast_type"),
-                forecast_start=self.selected_tableau_settings.get("forecast_start"),
+                forecast_type=result.get("forecast_type")
+                or self.selected_tableau_settings.get("forecast_type"),
+                forecast_start=result.get("forecast_start")
+                or self.selected_tableau_settings.get("forecast_start"),
             )
+            if category == "Revenue":
+                from automations.actuals.report_builder import add_run_notes_sheet
+
+                add_run_notes_sheet(
+                    result["final_report"],
+                    filters=result.get("filters_used", []),
+                    notes=result.get("capture_notes", []),
+                )
             if category == "Direct Cost":
                 from automations.actuals.direct_cost_individual_merge import (
                     merge_direct_cost_crosstabs,
