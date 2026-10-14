@@ -494,9 +494,9 @@ def run_live_revenue_validation(
         for key in ("consumer", "corporate", "group"):
             source = Path(tableau_sources[key])
             targets = [(label, tab) for k, label, tab in SOURCES if k == key]
-            temporary = source.with_name(
-                f"{source.stem}_RevenueActuals_{uuid4().hex[:8]}.twb"
-            )
+            from shared.tableau_temp_copies import temp_twb_path
+
+            temporary = temp_twb_path(source, "RevenueActuals")
             opened = False
             try:
                 prepare_revenue_copy(
