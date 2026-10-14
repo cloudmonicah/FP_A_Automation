@@ -1288,6 +1288,9 @@ class ActualsValidationView(tb.Frame):
                     "finance": str(
                         group_path.parent / "CBL Group Revenue_Finance View.twb"
                     ),
+                    "media": str(
+                        group_path.parent / "Cable Bahamas Group_MEDIA REVENUE.twb"
+                    ),
                 }
                 result = run_live_revenue_validation(
                     aliv_fs_path=aliv_fs_path,

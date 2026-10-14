@@ -156,15 +156,6 @@ OPEX_MAPPINGS = [
         "individual_tableau_worksheet": "ALIV Monthly Subaccount Actual v Budget",
         "individual_actuals_enabled": True,
     },
-    # {
-    #     "company": "ALIV",
-    #     "fs_line": "Service Delivery",
-    #     "tableau_category": "SERVICE DELIVERY",
-    #     "aggregation": AGG_DIRECT,
-    #     "individual_tableau_workbook": workbook_path("OPEX", "Service Delivery.twb"),
-    #     "individual_tableau_worksheet": "Monthly_Actual v Budget",
-    #     "individual_actuals_enabled": True,
-    # },
     {
         "company": "ALIV",
         "fs_line": "Operating Expenses",
@@ -328,12 +319,12 @@ OPEX_MAPPINGS = [
         "individual_tableau_worksheet": "Monthly Subaccount Actual v Budget",
         "individual_actuals_enabled": True,
     },
-    # {
-    #     "company": "CBL",
-    #     "fs_line": "Total Opex",
-    #     "tableau_category": "CBL Total",
-    #     "aggregation": AGG_TOTAL,
-    # },
+    {
+        "company": "CBL",
+        "fs_line": "Total Opex",
+        "tableau_category": "CBL Total",
+        "aggregation": AGG_TOTAL,
+    },
 ]
 
 
@@ -741,10 +732,13 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "fs_line": "Other",
         "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
         "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
-        # Row to read is not confirmed yet (this tab's layout is not reviewed).
-        "aggregation": AGG_PENDING,
+        # Total row of the OTHER REVENUE type. YTD = sum of the month columns.
+        "lookup": {
+            "GL FS Revenue by Type": "OTHER REVENUE",
+            "GL FS IS Breakdown": "Total",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
-        "note": "YTD = sum of the fiscal months through the closed month.",
     },
     {
         "company": "ALIV",
@@ -823,9 +817,10 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "company": "CBL",
         "fs_line": "Media",
         "individual_tableau_workbook": REVENUE_MEDIA_WORKBOOK,
-        "individual_tableau_worksheet": ("Monthly YTD Actual v Budget by Sub account"),
-        "tableau_categories": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_worksheet": "Monthly YTD Actual v Budget by Sub account",
+        # Grand Total row; each month shows its own Actual YTD column.
+        "lookup": {"Company": "Grand Total"},
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {

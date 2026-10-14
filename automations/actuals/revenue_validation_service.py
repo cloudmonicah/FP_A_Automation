@@ -37,14 +37,21 @@ SOURCES = [
         "CBL COMMERCIAL REVENUE by Sub Account Description - Monthly Actual v Budget",
     ),
     ("finance", "CBL Finance View", "CBL Monthly Revenue Forecast"),
+    ("finance", "ALIV Finance View", "ALIV Monthly Revenue Forecast"),
+    ("media", "CBL Media", "Monthly YTD Actual v Budget by Sub account"),
 ]
 
 # Sources that are read as the INDIVIDUAL value only (the same statement line
 # is also read from the Group rollup as the consolidated value).
-INDIVIDUAL_ONLY_LABELS = {"CBL Government", "CBL Finance View"}
+INDIVIDUAL_ONLY_LABELS = {
+    "CBL Government",
+    "CBL Finance View",
+    "ALIV Finance View",
+    "CBL Media",
+}
 
 # Sources that may be missing without stopping the whole run.
-OPTIONAL_KEYS = {"finance"}
+OPTIONAL_KEYS = {"finance", "media"}
 
 # Companies a failed capture affects.
 AFFECTED_COMPANIES = {
@@ -55,6 +62,8 @@ AFFECTED_COMPANIES = {
     "ALIV Group Other": ("ALIV",),
     "CBL Government": ("CBL",),
     "CBL Finance View": ("CBL",),
+    "ALIV Finance View": ("ALIV",),
+    "CBL Media": ("CBL",),
 }
 
 
@@ -275,7 +284,11 @@ def _month_actual_columns(headers, closed_period, basis):
     for month in months:
         found = None
         for label in (month.strftime("%b-%y"), month.strftime("%B %Y")):
-            for key in (label.upper(), f"{label.upper()} ACTUAL"):
+            for key in (
+                label.upper(),
+                f"{label.upper()} ACTUAL",
+                f"{label.upper()} ACTUAL YTD",
+            ):
                 if key in by_key:
                     found = by_key[key]
                     break
@@ -384,7 +397,8 @@ def parse_capture(text, basis, closed_period):
             if all(not str(v or "").strip() for v in parts):
                 row["_actual"] = ""
             else:
-                row["_actual"] = sum(number(v) for v in parts)
+                # A month with no postings is an empty cell in Tableau; it adds nothing.
+                row["_actual"] = sum(number(v) for v in parts if str(v or "").strip())
         else:
             row["_actual"] = row.get(normalized[target])
     return rows
@@ -459,6 +473,10 @@ def source_values(label, rows):
                 for line in ("Other", "MSA-ALIV")
             }
         }
+    if label == "ALIV Finance View":
+        return {"ALIV": {"Other": unique(rows, **_lookup("ALIV", "Other"))}}
+    if label == "CBL Media":
+        return {"CBL": {"Media": unique(rows, **_lookup("CBL", "Media"))}}
     if label == "ALIV Group Other":
         return {
             "ALIV": {
@@ -617,7 +635,7 @@ def run_live_revenue_validation(
     individual_values = {basis: {"ALIV": {}, "CBL": {}} for basis in values}
     sequence = 0
     for basis in ("MONTH", "YTD"):
-        for key in ("consumer", "corporate", "group", "finance"):
+        for key in ("consumer", "corporate", "group", "finance", "media"):
             source = Path(tableau_sources[key])
             targets = [
                 (label, tab)
@@ -681,7 +699,7 @@ def run_live_revenue_validation(
                                 values[basis][company].update(items)
                             # Consumer, Corporate and Finance View are independent
                             # detail sources. Group rollup is NOT an individual source.
-                            if key in ("consumer", "corporate", "finance"):
+                            if key in ("consumer", "corporate", "finance", "media"):
                                 individual_values[basis][company].update(items)
                     except Exception as exc:
                         for company in AFFECTED_COMPANIES[label]:
