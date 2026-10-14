@@ -760,6 +760,7 @@ class ForecastRefreshView(tb.Frame):
         passed = int(result.get("passed", 0))
         failed = int(result.get("failed", 0))
         action = int(result.get("action_required", 0))
+        not_validated = int(result.get("not_validated", 0))
 
         self.validation_passed_var.set(str(passed))
         self.validation_failed_var.set(str(failed))
@@ -778,6 +779,13 @@ class ForecastRefreshView(tb.Frame):
             self.status_description_var.set(
                 f"{passed} passed, {failed} failed, " f"{action} require action."
             )
+        elif not_validated:
+            self.status_var.set("Validated With Gaps")
+            self.status_description_var.set(
+                f"{passed} routes reconciled within tolerance; "
+                f"{not_validated} routes could not be automatically validated "
+                "(see the report)."
+            )
         else:
             self.status_var.set("Forecast Reconciled")
             self.status_description_var.set(
@@ -792,10 +800,11 @@ class ForecastRefreshView(tb.Frame):
             "Final forecast validation complete.\n\n"
             f"Passed: {passed}\n"
             f"Failed: {failed}\n"
-            f"Action Required: {action}"
+            f"Action Required: {action}\n"
+            f"Not Validated (needs manual check): {not_validated}"
         )
 
-        if failed or action:
+        if failed or action or not_validated:
             messagebox.showwarning(
                 "Forecast Validation Complete",
                 message,
@@ -818,6 +827,8 @@ class ForecastRefreshView(tb.Frame):
         self.status_var.set("Process Failed")
         self.status_description_var.set(f"{type(error).__name__}: {error}")
         self.prepare_button.configure(state="normal")
+        self.populate_button.configure(state="normal")
+        self.validate_button.configure(state="normal")
 
         messagebox.showerror(
             "Monthly Forecast Automation",

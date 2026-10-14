@@ -951,9 +951,20 @@ def run_grouped_individual_validation(
         allowed = {_norm(name) for name in only_workbooks}
 
     selected_routes = []
+    skipped_results = []
 
     for route in routes:
         if route.get("validation_status") != "confirmed":
+            if allowed is None or _norm(route.get("individual_tableau_workbook")) in allowed:
+                skipped_results.append(
+                    validate_route_from_tableau_rows(
+                        route=route,
+                        forecast_folder=forecast_folder,
+                        target_month_abbr=target_month_abbr,
+                        tableau_rows=[],
+                        tolerance=tolerance,
+                    )
+                )
             continue
 
         folder = route.get("individual_tableau_folder")
@@ -1109,6 +1120,10 @@ def run_grouped_individual_validation(
 
             workbook_results.append(workbook_record)
 
+    # Routes that need extra Tableau filtering are reported, never silently dropped.
+    results.extend(skipped_results)
+    not_validated = len(skipped_results)
+
     passed = sum(item.get("status") == "PASS" for item in results)
 
     failed = sum(item.get("status") == "FAIL" for item in results)
@@ -1121,9 +1136,10 @@ def run_grouped_individual_validation(
         "passed": passed,
         "failed": failed,
         "action_required": action_required,
+        "not_validated": not_validated,
         "status": (
             "PASS"
-            if results and failed == 0 and action_required == 0
+            if passed and failed == 0 and action_required == 0 and not_validated == 0
             else "REVIEW REQUIRED"
         ),
     }

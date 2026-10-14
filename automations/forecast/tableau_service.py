@@ -2635,13 +2635,18 @@ def extract_forecast_worksheets(
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
 
-    # Only one workbook open at a time: the automation finds Tableau's window
-    # by title, and leftover workbooks slow Tableau down and confuse that search.
-    from automations.actuals.tableau_desktop_close_service import (
-        close_all_tableau_workbooks,
-    )
+    # Only one workbook open at a time. open_tableau_workbook closes every
+    # open workbook and then opens the consolidated one, so extraction always
+    # starts with this workbook loaded (a bare close left nothing to read).
+    open_tableau_workbook(tableau_workbook_path=workbook_path)
 
-    close_all_tableau_workbooks()
+    # Wait for the workbook window to appear (large workbooks load slowly).
+    _get_tableau_window(
+        max_attempts=40,
+        retry_wait_seconds=3.0,
+        tableau_workbook_path=workbook_path,
+    )
+    time.sleep(5)
 
     unique_names = []
     seen = set()
