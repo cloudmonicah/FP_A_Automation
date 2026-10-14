@@ -1125,9 +1125,8 @@ class ActualsValidationView(tb.Frame):
         try:
             folder.mkdir(parents=True, exist_ok=True)
             for basis in ("MONTH", "YTD"):
-                from shared.tableau_temp_copies import temp_twb_path
-
-                temporary = temp_twb_path(source, "Revenue_GUI")
+                # Work directly on the source workbook: set the filters, save it.
+                temporary = Path(source)
                 opened = False
                 try:
                     prepare_revenue_copy(source, temporary, [worksheet], period, basis)
@@ -1156,7 +1155,6 @@ class ActualsValidationView(tb.Frame):
                         except Exception as exc:
                             log.exception("Error in %s", type(self).__name__)
                             print(f"[REVENUE GUI] Close warning: {exc}", flush=True)
-                    temporary.unlink(missing_ok=True)
             self.after(0, self._revenue_live_test_finished, str(folder), None)
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)

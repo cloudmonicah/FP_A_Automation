@@ -101,6 +101,12 @@ def find_statement_period(sheet, preferred="D1", scan_rows=6, scan_cols=10):
 
 
 def prepare_revenue_copy(source, destination, tabs, closed_period, basis):
+    """Set the period filters and write the workbook to ``destination``.
+
+    ``destination`` may be the source itself: the Revenue flow edits the
+    source workbook in place and saves it, so no temporary copy is made.
+    Returns the filter values that were set (recorded in the crosstab workbook).
+    """
     root = ET.parse(source).getroot()
     start = date(
         closed_period.year + (closed_period.month == 12),
@@ -196,6 +202,18 @@ def prepare_revenue_copy(source, destination, tabs, closed_period, basis):
                         f'"FY{(fiscal_start.year+1)%100:02} Forecast_{start:%m%Y}"',
                     )
     ET.ElementTree(root).write(destination, encoding="utf-8", xml_declaration=True)
+    return {
+        "Basis": basis,
+        "Forecast Start": f"{start:%m/%d/%Y}",
+        "Forecast Type": f"FY{(fiscal_start.year + 1) % 100:02} Forecast_{start:%m%Y}",
+        "GL Posting Date months": (
+            f"{months[0]:%b %Y} to {months[-1]:%b %Y} ({len(months)} month(s))"
+            if months
+            else "none"
+        ),
+        "Fiscal Year": str(fiscal_start.year + 1),
+        "Actual window": f"{lower:%m/%d/%Y} up to {start:%m/%d/%Y}",
+    }
 
 
 def parse_capture(text, basis, closed_period):
@@ -427,9 +445,7 @@ def run_live_revenue_validation(
         refresh_summary,
         report_status,
     )
-    from automations.actuals.tableau_standalone_forecast_service import (
-        _append_crosstab_audit,
-    )
+    from automations.actuals.crosstab_audit import append_crosstab
 
     if capture is None:
         from automations.actuals.tableau_desktop_export_service import (
@@ -479,15 +495,15 @@ def run_live_revenue_validation(
         for key in ("consumer", "corporate", "group"):
             source = Path(tableau_sources[key])
             targets = [(label, tab) for k, label, tab in SOURCES if k == key]
-            from shared.tableau_temp_copies import temp_twb_path
-
-            temporary = temp_twb_path(source, "RevenueActuals")
             opened = False
             try:
-                prepare_revenue_copy(
-                    source, temporary, [tab for _, tab in targets], closed_period, basis
+                # Set this month's filters directly in the source workbook and
+                # save it; no temporary copy is made.
+                filters = prepare_revenue_copy(
+                    source, source, [tab for _, tab in targets], closed_period, basis
                 )
-                opener(tableau_workbook_path=str(temporary))
+                print(f"Revenue {basis}: saved {source.name} | {filters}", flush=True)
+                opener(tableau_workbook_path=str(source))
                 opened = True
                 if wait_seconds:
                     time.sleep(wait_seconds)
@@ -496,30 +512,26 @@ def run_live_revenue_validation(
                     print(f"Revenue {basis}: {label} | {tab}", flush=True)
                     try:
                         text = capture(
-                            worksheet_name=tab, tableau_workbook_path=str(temporary)
+                            worksheet_name=tab, tableau_workbook_path=str(source)
                         )
-                        (
-                            raw
-                            / f'{sequence:03}_{key}_{label.replace(" ","_")}_{basis}.txt'
-                        ).write_text(text, encoding="utf-8")
-                        # Preserve the original Tableau clipboard text in the .txt audit.
-                        # For Excel, export parsed records with genuine Tableau headers.
-                        # The parser handles two-row month/measure headings.
                         rows = parse_capture(text, basis, closed_period)
-                        audit_rows = [
-                            {k: v for k, v in record.items() if not k.startswith("_")}
-                            for record in rows
-                        ]
-                        _append_crosstab_audit(
+                        company_tag = (
+                            "ALIV" if label.startswith("ALIV") else
+                            "CBL" if label.startswith("CBL") else "ALIV+CBL"
+                        )
+                        append_crosstab(
                             audit,
-                            audit_rows,
-                            source,
-                            temporary,
-                            tab,
-                            label,
-                            "Revenue",
-                            basis,
-                            sequence,
+                            [
+                                {k: v for k, v in record.items() if not k.startswith("_")}
+                                for record in rows
+                            ],
+                            source=source,
+                            tab=tab,
+                            company=company_tag,
+                            area="Revenue",
+                            basis=basis,
+                            sequence=sequence,
+                            filters={**filters, "Capture": label},
                         )
                         parsed = source_values(label, rows)
                         for company, items in parsed.items():
@@ -544,8 +556,7 @@ def run_live_revenue_validation(
                             )
             finally:
                 if opened:
-                    closer(tableau_workbook_path=str(temporary))
-                temporary.unlink(missing_ok=True)
+                    closer(tableau_workbook_path=str(source))
     print("Revenue: all Tableau captures finished; preparing comparisons.", flush=True)
     for basis in ("MONTH", "YTD"):
         for company in ("ALIV", "CBL"):
