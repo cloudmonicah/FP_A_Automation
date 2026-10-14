@@ -24,7 +24,50 @@ SOURCES = [
         "CBL & ALIV REVENUE SUMMARY - Month YTD Actual v Budget",
     ),
     ("group", "CBL Group", "CBL FS Rollup View Group Monthly Revenue YTD_SUMMARY"),
+    # Consolidated ALIV "Other" = OTHER REVENUE on the ALIV FS Rollup view.
+    (
+        "group",
+        "ALIV Group Other",
+        "ALIV FS Rollup View_Monthly Revenue Forecast_Summary",
+    ),
+    # Individual captures for CBL Government, Other and MSA-ALIV.
+    (
+        "corporate",
+        "CBL Government",
+        "CBL COMMERCIAL REVENUE by Sub Account Description - Monthly Actual v Budget",
+    ),
+    ("finance", "CBL Finance View", "CBL Monthly Revenue Forecast"),
 ]
+
+# Sources that are read as the INDIVIDUAL value only (the same statement line
+# is also read from the Group rollup as the consolidated value).
+INDIVIDUAL_ONLY_LABELS = {"CBL Government", "CBL Finance View"}
+
+# Sources that may be missing without stopping the whole run.
+OPTIONAL_KEYS = {"finance"}
+
+# Companies a failed capture affects.
+AFFECTED_COMPANIES = {
+    "ALIV Consumer": ("ALIV",),
+    "CBL Consumer": ("CBL",),
+    "Corporate": ("ALIV", "CBL"),
+    "CBL Group": ("CBL",),
+    "ALIV Group Other": ("ALIV",),
+    "CBL Government": ("CBL",),
+    "CBL Finance View": ("CBL",),
+}
+
+
+def _lookup(company, fs_line):
+    """The row-lookup dictionary configured in mapping.py for one line."""
+    from automations.actuals.mapping import INDIVIDUAL_REVENUE_MAPPINGS
+
+    for route in INDIVIDUAL_REVENUE_MAPPINGS:
+        if route["company"] == company and route["fs_line"] == fs_line:
+            if not route.get("lookup"):
+                raise ValueError(f"No Tableau row lookup configured for {company} / {fs_line}.")
+            return dict(route["lookup"])
+    raise ValueError(f"No individual Revenue mapping for {company} / {fs_line}.")
 
 
 def canonical(value):
@@ -216,6 +259,34 @@ def prepare_revenue_copy(source, destination, tabs, closed_period, basis):
     }
 
 
+def _month_actual_columns(headers, closed_period, basis):
+    """Actual columns, one per requested month, or None if any is missing."""
+    current = (
+        date(closed_period.year - (closed_period.month < 7), 7, 1)
+        if basis == "YTD"
+        else date(closed_period.year, closed_period.month, 1)
+    )
+    months = []
+    while current <= closed_period:
+        months.append(current)
+        current = date(current.year + (current.month == 12), current.month % 12 + 1, 1)
+    by_key = {canonical(h): h for h in headers}
+    columns = []
+    for month in months:
+        found = None
+        for label in (month.strftime("%b-%y"), month.strftime("%B %Y")):
+            for key in (label.upper(), f"{label.upper()} ACTUAL"):
+                if key in by_key:
+                    found = by_key[key]
+                    break
+            if found:
+                break
+        if not found:
+            return None
+        columns.append(found)
+    return columns
+
+
 def parse_capture(text, basis, closed_period):
     """Flatten one or two header rows and restore suppressed hierarchy labels."""
     raw = [
@@ -227,7 +298,17 @@ def parse_capture(text, basis, closed_period):
         raise ValueError("Revenue capture is empty.")
     first = raw[0]
     two_headers = any(
-        canonical(v) in ("ACTUAL YTD", "BUDGET YTD", "VAR YTD $", "VAR YTD %")
+        canonical(v)
+        in (
+            "ACTUAL YTD",
+            "BUDGET YTD",
+            "VAR YTD $",
+            "VAR YTD %",
+            "ACTUAL",
+            "BUDGET",
+            "VAR $",
+            "VAR %",
+        )
         for v in raw[1]
     )
     if two_headers:
@@ -252,8 +333,14 @@ def parse_capture(text, basis, closed_period):
                 closed_period.strftime("%B %Y").upper(),
             ]
             target = next((label for label in labels if label in normalized), target)
+    month_columns = None
     if target not in normalized:
-        raise ValueError(f"Revenue actual column is missing: {target}")
+        # Months-as-columns sheets (no Grand Total): the value is the sum of
+        # the month columns for the period (MONTH = closed month; YTD = every
+        # fiscal month from July through the closed month).
+        month_columns = _month_actual_columns(headers, closed_period, basis)
+        if not month_columns:
+            raise ValueError(f"Revenue actual column is missing: {target}")
     # Period filters were set on the temporary TWB before capture. Check visible month headers too.
     visible = set()
     for h in headers:
@@ -292,7 +379,14 @@ def parse_capture(text, basis, closed_period):
                 last[h] = value
             else:
                 row[h] = last[h]
-        row["_actual"] = row.get(normalized[target])
+        if month_columns:
+            parts = [row.get(h) for h in month_columns]
+            if all(not str(v or "").strip() for v in parts):
+                row["_actual"] = ""
+            else:
+                row["_actual"] = sum(number(v) for v in parts)
+        else:
+            row["_actual"] = row.get(normalized[target])
     return rows
 
 
@@ -355,6 +449,28 @@ def source_values(label, rows):
                 "Corporate - Recurring": total - oneoff,
                 "Corporate - One off": oneoff,
             },
+        }
+    if label == "CBL Government":
+        return {"CBL": {"Government": unique(rows, **_lookup("CBL", "Government"))}}
+    if label == "CBL Finance View":
+        return {
+            "CBL": {
+                line: unique(rows, **_lookup("CBL", line))
+                for line in ("Other", "MSA-ALIV")
+            }
+        }
+    if label == "ALIV Group Other":
+        return {
+            "ALIV": {
+                "Other": unique(
+                    rows,
+                    **{
+                        "Company": "ALIV",
+                        "GL FS Revenue by Type": "OTHER REVENUE",
+                        "GL Account Mapping": "Total",
+                    },
+                )
+            }
         }
     # CBL Group rollup (sheet "CBL FS Rollup View Group Monthly Revenue YTD_SUMMARY").
     # This sheet has only two dimension columns, so a route is (Bus Code, FS Category).
@@ -463,18 +579,28 @@ def run_live_revenue_validation(
         )
 
         closer = close_tableau_forecast_workbook
-    # Validate all selected files/tabs before opening Tableau.
-    for key, _, tab in SOURCES:
-        path = Path(tableau_sources[key])
+    # Validate all selected files/tabs before opening Tableau. Optional sources
+    # (Finance View) that are missing only leave their lines PENDING.
+    notes = {basis: {"ALIV": [], "CBL": []} for basis in ("MONTH", "YTD")}
+    unavailable = set()
+    for key, label, tab in SOURCES:
+        path = Path(tableau_sources.get(key) or "")
+        problem = None
         if not path.is_file() or path.suffix.lower() != ".twb":
-            raise ValueError(f"Select the Revenue {key} TWB.")
-        if (
+            problem = f"Select the Revenue {key} TWB."
+        elif (
             ET.parse(path).getroot().find(f'./worksheets/worksheet[@name="{tab}"]')
             is None
         ):
-            raise ValueError(
-                f"{path.name} does not contain the mapped Revenue tab: {tab}"
-            )
+            problem = f"{path.name} does not contain the mapped Revenue tab: {tab}"
+        if not problem:
+            continue
+        if key not in OPTIONAL_KEYS and label not in INDIVIDUAL_ONLY_LABELS:
+            raise ValueError(problem)
+        unavailable.add(label)
+        for basis in notes:
+            for company in AFFECTED_COMPANIES[label]:
+                notes[basis][company].append(f"{label}: {problem}")
     statements = {
         "ALIV": aliv_statement_periods(aliv_fs_path, closed_period),
         "CBL": read_cbl_area(cbl_fs_path, "Revenue", closed_period),
@@ -488,20 +614,35 @@ def run_live_revenue_validation(
     raw.mkdir(parents=True, exist_ok=True)
     audit = raw / "Revenue_Actuals_Crosstabs.xlsx"
     values = {basis: {"ALIV": {}, "CBL": {}} for basis in ("MONTH", "YTD")}
-    notes = {basis: {"ALIV": [], "CBL": []} for basis in values}
     individual_values = {basis: {"ALIV": {}, "CBL": {}} for basis in values}
     sequence = 0
     for basis in ("MONTH", "YTD"):
-        for key in ("consumer", "corporate", "group"):
+        for key in ("consumer", "corporate", "group", "finance"):
             source = Path(tableau_sources[key])
-            targets = [(label, tab) for k, label, tab in SOURCES if k == key]
+            targets = [
+                (label, tab)
+                for k, label, tab in SOURCES
+                if k == key and label not in unavailable
+            ]
+            if not targets:
+                continue
             opened = False
             try:
                 # Set this month's filters directly in the source workbook and
                 # save it; no temporary copy is made.
-                filters = prepare_revenue_copy(
-                    source, source, [tab for _, tab in targets], closed_period, basis
-                )
+                try:
+                    filters = prepare_revenue_copy(
+                        source, source, [tab for _, tab in targets], closed_period, basis
+                    )
+                except Exception as exc:
+                    if key not in OPTIONAL_KEYS:
+                        raise
+                    for label, _ in targets:
+                        for company in AFFECTED_COMPANIES[label]:
+                            notes[basis][company].append(
+                                f"{label}: {type(exc).__name__}: {exc}"
+                            )
+                    continue
                 print(f"Revenue {basis}: saved {source.name} | {filters}", flush=True)
                 opener(tableau_workbook_path=str(source))
                 opened = True
@@ -515,10 +656,7 @@ def run_live_revenue_validation(
                             worksheet_name=tab, tableau_workbook_path=str(source)
                         )
                         rows = parse_capture(text, basis, closed_period)
-                        company_tag = (
-                            "ALIV" if label.startswith("ALIV") else
-                            "CBL" if label.startswith("CBL") else "ALIV+CBL"
-                        )
+                        company_tag = "+".join(AFFECTED_COMPANIES[label])
                         append_crosstab(
                             audit,
                             [
@@ -535,22 +673,18 @@ def run_live_revenue_validation(
                         )
                         parsed = source_values(label, rows)
                         for company, items in parsed.items():
-                            if set(items) & set(values[basis][company]):
-                                raise ValueError(
-                                    "Duplicate Revenue mapping across sources."
-                                )
-                            values[basis][company].update(items)
-                            # Consumer and Corporate are independent detail sources.
-                            # Group rollup is NOT an individual validation source.
-                            if key in ("consumer", "corporate"):
+                            if label not in INDIVIDUAL_ONLY_LABELS:
+                                if set(items) & set(values[basis][company]):
+                                    raise ValueError(
+                                        "Duplicate Revenue mapping across sources."
+                                    )
+                                values[basis][company].update(items)
+                            # Consumer, Corporate and Finance View are independent
+                            # detail sources. Group rollup is NOT an individual source.
+                            if key in ("consumer", "corporate", "finance"):
                                 individual_values[basis][company].update(items)
                     except Exception as exc:
-                        affected = (
-                            ("ALIV",)
-                            if label == "ALIV Consumer"
-                            else ("ALIV", "CBL") if label == "Corporate" else ("CBL",)
-                        )
-                        for company in affected:
+                        for company in AFFECTED_COMPANIES[label]:
                             notes[basis][company].append(
                                 f"{label}: {type(exc).__name__}: {exc}"
                             )

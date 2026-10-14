@@ -576,6 +576,8 @@ REVENUE_CORPORATE_WORKBOOK = (
     rf"{_REVENUE_FOLDER}\Cable Bahamas Group_CORPORATE REVENUE.twb"
 )
 REVENUE_MEDIA_WORKBOOK = rf"{_REVENUE_FOLDER}\Cable Bahamas Group_MEDIA REVENUE.twb"
+# "CBL Group Revenue_Finance View" (Other / MSA-ALIV individual captures).
+REVENUE_FINANCE_WORKBOOK = rf"{_REVENUE_FOLDER}\CBL Group Revenue_Finance View.twb"
 
 
 # ============================================================
@@ -737,15 +739,12 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
     {
         "company": "ALIV",
         "fs_line": "Other",
-        "individual_tableau_workbook": REVENUE_CONSUMER_WORKBOOK,
-        "individual_tableau_worksheet": (
-            "ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD"
-        ),
-        "mapping_column": "GL FS Type",
-        "mapping_values": [],
+        "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
+        "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
+        # Row to read is not confirmed yet (this tab's layout is not reviewed).
         "aggregation": AGG_PENDING,
         "individual_actuals_enabled": True,
-        "note": "Confirm all applicable OTHER CONSUMER GL FS Type values.",
+        "note": "YTD = sum of the fiscal months through the closed month.",
     },
     {
         "company": "ALIV",
@@ -808,18 +807,23 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "fs_line": "Government",
         "individual_tableau_workbook": REVENUE_CORPORATE_WORKBOOK,
         "individual_tableau_worksheet": (
-            "CBL COMMERCIAL REVENUE DETAILS - Monthly Actuals"
+            "CBL COMMERCIAL REVENUE by Sub Account Description - Monthly Actual v Budget"
         ),
-        "mapping_column": "GL FS Type",
-        "mapping_values": ["CORPORATE GOVERNMENT"],
-        "aggregation": AGG_PENDING,
+        # The row to read: every column named here must match (the Total row
+        # of the CORPORATE GOVERNMENT category).
+        "lookup": {
+            "GL Bus Code Name": "ALIV BUSINESS",
+            "GL FS Category": "CORPORATE GOVERNMENT",
+            "GL Account Mapping": "Total",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "Media",
         "individual_tableau_workbook": REVENUE_MEDIA_WORKBOOK,
-        "individual_tableau_worksheet": (" Monthly YTD Actual v Budget by Sub account"),
+        "individual_tableau_worksheet": ("Monthly YTD Actual v Budget by Sub account"),
         "tableau_categories": [],
         "aggregation": AGG_PENDING,
         "individual_actuals_enabled": True,
@@ -827,15 +831,28 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
     {
         "company": "CBL",
         "fs_line": "Other",
-        "tableau_categories": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
+        "individual_tableau_worksheet": "CBL Monthly Revenue Forecast",
+        "lookup": {
+            "GL Bus Code Name": "HFC FIXED NETWORK CONSUMER",
+            "GL FS Category": "OTHER SUBSCRIBER",
+            "GL Account Mapping": "SMART HOME PRODUCTS REVENUE",
+            "GL Sub Account Description": "RING REVENUE",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "MSA-ALIV",
-        "tableau_categories": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
+        "individual_tableau_worksheet": "CBL Monthly Revenue Forecast",
+        # Statement MSA-ALIV = the INTERCOMPANY business code (its Total row).
+        "lookup": {
+            "GL Bus Code Name": "INTERCOMPANY",
+            "GL FS Category": "Total",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {
