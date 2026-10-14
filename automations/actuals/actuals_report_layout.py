@@ -119,12 +119,29 @@ def write_area_workbook(
 def statement_ytd(path, closed_period):
     if not path:
         return {}
-    from automations.actuals.adaptive_aliv_statement_reader import read_aliv_period
+    from automations.actuals.adaptive_aliv_statement_reader import (
+        read_aliv_period,
+        july_ytd_mismatches,
+    )
 
+    values = read_aliv_period(path, closed_period)
+    bad = july_ytd_mismatches(values, closed_period)
+    usable = [k for k, v in values.items() if v is not None]
+    if bad and len(bad) > max(3, len(usable) // 2):
+        raise ValueError(
+            "ALIV July statement YTD does not equal July monthly for most lines "
+            f"({len(bad)} of {len(usable)}); the YTD column looks like it was not reset "
+            "for the new fiscal year. Confirm the statement before validating."
+        )
+    if bad:
+        print("WARNING: ALIV July YTD differs from July monthly; these lines are marked "
+              "NOT VALIDATED for YTD:", flush=True)
+        for k, (m, y) in bad.items():
+            print(f"  {k}: month={m:,.3f} ytd={y:,.3f}", flush=True)
     return {
         k: rounded(v[1])
-        for k, v in read_aliv_period(path, closed_period).items()
-        if v is not None
+        for k, v in values.items()
+        if v is not None and k not in bad
     }
 
 

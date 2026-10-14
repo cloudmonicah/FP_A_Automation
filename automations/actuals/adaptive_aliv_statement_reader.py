@@ -52,17 +52,21 @@ def read_aliv_period(path, closed_period):
                 out[label]=None
             elif isinstance(month,(int,float,Decimal)) and isinstance(ytd,(int,float,Decimal)):
                 out[label]=(float(month),float(ytd))
-        if closed_period.month == 7:
-            inconsistent=[k for k,pair in out.items() if pair is not None and abs(pair[0]-pair[1])>1.0]
-            if inconsistent:
-                detail="; ".join(f"{k}: month={out[k][0]:,.3f} ytd={out[k][1]:,.3f}" for k in inconsistent[:12])
-                raise ValueError(
-                    f"ALIV July statement YTD does not equal July monthly actual "
-                    f"({len(inconsistent)} lines differ by more than 1.0). "
-                    f"File: {Path(path).name}; header row {header+1}, month column {month_col+1}, "
-                    f"YTD column {ytd_col+1}. Lines: {detail}")
         return out
     finally: wb.close()
+
+
+def july_ytd_mismatches(values, closed_period, tolerance=1.0):
+    """Lines whose YTD differs from the monthly actual in July (month 1 of the fiscal year).
+
+    Returns {label: (month, ytd)}. Empty for any other month.
+    """
+    if closed_period.month != 7:
+        return {}
+    return {
+        k: pair for k, pair in values.items()
+        if pair is not None and abs(pair[0] - pair[1]) > tolerance
+    }
 
 
 def get_aliv_line(path,closed_period,label):
@@ -70,4 +74,10 @@ def get_aliv_line(path,closed_period,label):
     key=norm(label)
     if key not in values or values[key] is None:
         raise ValueError(f'ALIV statement line missing/ambiguous: {label}')
+    bad=july_ytd_mismatches({key: values[key]}, closed_period)
+    if bad:
+        m,y=bad[key]
+        raise ValueError(
+            f'ALIV July YTD does not equal July monthly for {label} '
+            f'(month={m:,.3f}, ytd={y:,.3f}); confirm the statement before validating.')
     return values[key]
