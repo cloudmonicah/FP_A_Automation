@@ -22,6 +22,7 @@ from automations.actuals.opex_validation_service import (
 from automations.actuals.direct_cost_validation_service import (
     run_live_direct_cost_validation,
 )
+from ui.common import confirm_close_tableau, notify_finished
 
 log = logging.getLogger(__name__)
 
