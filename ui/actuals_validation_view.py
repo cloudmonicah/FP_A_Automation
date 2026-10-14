@@ -835,10 +835,11 @@ class ActualsValidationView(tb.Frame):
                 or self.output_period_var.get()
                 != self._get_output_period(closed_period)
             ):
-                raise ValueError(
-                    "The reporting period has changed. "
-                    "Click Set Validation Period again."
-                )
+
+                self.validation_output_paths = None
+                self._confirm_closed_period()
+                if self.validation_output_paths is None:
+                    return
 
             # -------------------------------------------------
             # FINANCIAL STATEMENTS
