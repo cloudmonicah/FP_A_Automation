@@ -818,8 +818,9 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "fs_line": "Media",
         "individual_tableau_workbook": REVENUE_MEDIA_WORKBOOK,
         "individual_tableau_worksheet": "Monthly YTD Actual v Budget by Sub account",
-        # Grand Total row; each month shows its own Actual YTD column.
-        "lookup": {"Company": "Grand Total"},
+        # Every sub-account row whose GL Account Mapping is MEDIA REVENUE is
+        # added up (months summed too); checked against the Grand Total row.
+        "lookup": {"GL Account Mapping": "MEDIA REVENUE"},
         "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },

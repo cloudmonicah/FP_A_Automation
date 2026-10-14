@@ -68,12 +68,13 @@ def test_wrong_month_headers_are_rejected():
         raise AssertionError("expected the extra month to be rejected")
 
 
-def test_media_grand_total_sums_month_actual_ytd():
+def test_media_revenue_subtotal_sums_month_actual_ytd():
     h1 = ["Company", "GL Account Mapping", "GL Sub Segment code", "GL Sub Account Description",
           "July 2026", "", "", "", "August 2026", "", "", ""]
     h2 = [""] * 4 + ["Actual YTD", "Budget YTD", "Var YTD $", "Var YTD %"] * 2
     body = [
         ["CBL", "MEDIA REVENUE", "410003", "CABLE MEDIA PROG", "31,963", "15,075", "16,888", "112.03%", "17,733", "15,075", "2,658", "17.0%"],
+        ["CBL", "MEDIA REVENUE", "410004", "OTHER MEDIA", "83,435", "1", "1", "1%", "94,431", "1", "1", "1%"],
         ["Grand Total", "", "", "", "115,398", "157,067", "-41,668", "-26.53%", "112,164", "127,067", "-14,902", "-11.7%"],
     ]
     text = _tsv(h1, h2, *body)

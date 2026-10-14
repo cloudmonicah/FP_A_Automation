@@ -476,7 +476,23 @@ def source_values(label, rows):
     if label == "ALIV Finance View":
         return {"ALIV": {"Other": unique(rows, **_lookup("ALIV", "Other"))}}
     if label == "CBL Media":
-        return {"CBL": {"Media": unique(rows, **_lookup("CBL", "Media"))}}
+        dims = _lookup("CBL", "Media")
+        detail = [
+            r
+            for r in rows
+            if canonical(r.get("Company")) != "GRAND TOTAL"
+            and all(canonical(r.get(k)) == canonical(v) for k, v in dims.items())
+        ]
+        if not detail:
+            raise ValueError(f"No Media rows found for {dims}.")
+        total = sum(number(r["_actual"]) for r in detail)
+        grand = [r for r in rows if canonical(r.get("Company")) == "GRAND TOTAL"]
+        if len(grand) == 1 and abs(number(grand[0]["_actual"]) - total) > 0.5:
+            raise ValueError(
+                f"Media rows add to {total:,.2f} but Grand Total is "
+                f"{number(grand[0]['_actual']):,.2f}; check the Media lookup."
+            )
+        return {"CBL": {"Media": total}}
     if label == "ALIV Group Other":
         return {
             "ALIV": {
@@ -556,6 +572,21 @@ def aliv_statement_periods(path, closed_period):
         return result
     finally:
         report.close()
+
+
+def _clear_open_menus():
+    """Close any Tableau menu or dialog a failed attempt left open.
+
+    A menu left open by one failed capture blocks every later capture, which
+    is what turned a single failure into an all-PENDING report.
+    """
+    try:
+        from pywinauto.keyboard import send_keys
+
+        send_keys("{ESC}{ESC}")
+        time.sleep(0.5)
+    except Exception:
+        pass
 
 
 def run_live_revenue_validation(
@@ -672,9 +703,24 @@ def run_live_revenue_validation(
                     sequence += 1
                     print(f"Revenue {basis}: {label} | {tab}", flush=True)
                     try:
-                        text = capture(
-                            worksheet_name=tab, tableau_workbook_path=str(source)
-                        )
+                        _clear_open_menus()
+                        try:
+                            text = capture(
+                                worksheet_name=tab, tableau_workbook_path=str(source)
+                            )
+                        except RuntimeError as first_error:
+                            # One retry: clear menus, give Tableau time to
+                            # finish loading the filtered view, then try again.
+                            print(
+                                f"Revenue {basis}: {label} capture failed "
+                                f"({first_error}); retrying once.",
+                                flush=True,
+                            )
+                            _clear_open_menus()
+                            time.sleep(max(wait_seconds, 5))
+                            text = capture(
+                                worksheet_name=tab, tableau_workbook_path=str(source)
+                            )
                         rows = parse_capture(text, basis, closed_period)
                         company_tag = "+".join(AFFECTED_COMPANIES[label])
                         append_crosstab(
@@ -704,6 +750,7 @@ def run_live_revenue_validation(
                             if key in ("consumer", "corporate", "finance", "media"):
                                 individual_values[basis][company].update(items)
                     except Exception as exc:
+                        _clear_open_menus()
                         for company in AFFECTED_COMPANIES[label]:
                             notes[basis][company].append(
                                 f"{label}: {type(exc).__name__}: {exc}"
