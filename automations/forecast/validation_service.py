@@ -4,7 +4,6 @@ from datetime import date, datetime
 
 from pathlib import Path
 import re
-import time
 
 from openpyxl import load_workbook
 
