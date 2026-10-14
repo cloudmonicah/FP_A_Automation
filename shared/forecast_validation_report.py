@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import os
 from datetime import datetime
 from pathlib import Path
 from openpyxl import Workbook
@@ -49,6 +51,7 @@ def write_forecast_validation_report(
     green = PatternFill("solid", fgColor="E2F0D9")
     red = PatternFill("solid", fgColor="FCE4D6")
     yellow = PatternFill("solid", fgColor="FFF2CC")
+    grey = PatternFill("solid", fgColor="EDEDED")
     edge = Border(bottom=Side(style="thin", color="B7B7B7"))
 
     ws.merge_cells("A1:F1")
@@ -71,30 +74,37 @@ def write_forecast_validation_report(
         ("Not Validated", counts.get("NOT VALIDATED", 0)),
         ("Overall Status", overall),
     ]
+    value_cells = {}
     for r, (label, value) in enumerate(rows, start=3):
         ws.cell(r, 1, label).font = Font(bold=True)
-        ws.cell(r, 2, value)
+        value_cells[label] = ws.cell(r, 2, value)
         ws.cell(r, 1).border = edge
         ws.cell(r, 2).border = edge
-    ws["B5"].number_format = "mm/dd/yyyy"
-    ws["B7"].number_format = "$#,##0.00;[Red]-$#,##0.00"
-    ws["B13"].fill = green if overall == "RECONCILED" else yellow
-    ws["B13"].font = Font(bold=True)
-    ws["A15"] = "Status Guide"
-    ws["A15"].font = Font(bold=True)
+    value_cells["Forecast Start"].number_format = "mm/dd/yyyy"
+    value_cells["Tolerance"].number_format = "$#,##0.00;[Red]-$#,##0.00"
+    value_cells["Overall Status"].fill = green if overall == "RECONCILED" else yellow
+    value_cells["Overall Status"].font = Font(bold=True)
+    guide_row = 3 + len(rows) + 1
+    ws.cell(guide_row, 1, "Status Guide").font = Font(bold=True)
     guides = [
         (
             "PASS",
             "Excel and individual Tableau Grand Totals reconcile within tolerance.",
         ),
         ("FAIL", "Validation completed but the variance exceeds tolerance."),
-        ("ACTION REQUIRED", "Validation could not complete and requires review."),
+        (
+            "ACTION REQUIRED",
+            "The automation could not finish this route (Tableau or a missing "
+            "file). See Note; the other routes still ran.",
+        ),
         (
             "NOT VALIDATED",
-            "Route is not yet configured for automated individual Tableau validation.",
+            "Not compared: the forecast line is suspect (for example a different "
+            "forecast month) or the route is not set up for automated validation. "
+            "See Note.",
         ),
     ]
-    for r, (s, m) in enumerate(guides, start=16):
+    for r, (s, m) in enumerate(guides, start=guide_row + 1):
         ws.cell(r, 1, s).font = Font(bold=True)
         ws.cell(r, 2, m)
     ws.column_dimensions["A"].width = 24
@@ -144,7 +154,11 @@ def write_forecast_validation_report(
         s = str(item.get("status") or "").upper()
         sc = detail.cell(r, 8)
         sc.font = Font(bold=True)
-        sc.fill = green if s == "PASS" else red if s == "FAIL" else yellow
+        sc.fill = (
+            green
+            if s == "PASS"
+            else red if s == "FAIL" else grey if s == "NOT VALIDATED" else yellow
+        )
 
     detail.freeze_panes = "A2"
     detail.auto_filter.ref = detail.dimensions
@@ -168,6 +182,27 @@ def write_forecast_validation_report(
         for c in row:
             c.alignment = Alignment(vertical="top", wrap_text=True)
 
-    wb.save(path)
-    wb.close()
-    return path
+    try:
+        return _save(wb, path)
+    finally:
+        wb.close()
+
+
+def _save(wb, path: Path) -> Path:
+    """Save without losing the run when the old report is open in Excel.
+
+    The workbook is written to a staging file first. If the existing report
+    is locked (open in Excel), the new one is kept under a timestamped name
+    next to it instead of failing after a long Tableau run.
+    """
+    staged = path.with_name(f"~staging_{path.name}")
+    wb.save(staged)
+    try:
+        os.replace(staged, path)
+        return path
+    except PermissionError:
+        fallback = path.with_name(f"{path.stem} ({datetime.now():%Y-%m-%d %H%M%S}){path.suffix}")
+        os.replace(staged, fallback)
+        return fallback
+    finally:
+        staged.unlink(missing_ok=True)
