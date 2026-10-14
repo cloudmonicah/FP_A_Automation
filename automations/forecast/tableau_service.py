@@ -626,7 +626,9 @@ def _get_tableau_window(
             )
 
             try:
-                window.maximize()
+                # Maximize the window that was selected and checked above
+                # (this used the leftover loop variable before).
+                workbook_window.maximize()
                 time.sleep(1.0)
             except Exception as exc:
                 print(f"WARNING: Could not maximize Tableau window: {exc}")
@@ -671,6 +673,55 @@ def _get_tableau_window(
         f"{max_attempts} attempts. "
         "Tableau windows detected: " + "; ".join(last_titles)
     )
+
+
+def wait_for_tableau_workbook(
+    tableau_workbook_path: str | Path,
+    timeout_seconds: float = 240.0,
+    poll_seconds: float = 3.0,
+    settle_seconds: float = 3.0,
+    find_window=None,
+    sleep=time.sleep,
+    clock=time.monotonic,
+):
+    """Wait until Tableau has finished opening ``tableau_workbook_path``.
+
+    A workbook is ready when its window shows the Worksheet and Window menus
+    (the same test _get_tableau_window uses). Large workbooks can take a
+    minute or more, so this polls up to ``timeout_seconds`` instead of a
+    fixed sleep followed by three one-second checks, which is what produced
+    "workbook is not ready yet" on the first attempt.
+    """
+    find_window = find_window or (
+        lambda path: _get_tableau_window(
+            max_attempts=1,
+            retry_wait_seconds=0,
+            tableau_workbook_path=path,
+        )
+    )
+    name = Path(tableau_workbook_path).stem
+    deadline = clock() + timeout_seconds
+    last_error = None
+
+    while True:
+        try:
+            window = find_window(tableau_workbook_path)
+        except Exception as exc:
+            last_error = exc
+        else:
+            if settle_seconds:
+                sleep(settle_seconds)  # let the first view finish drawing
+            return window
+
+        if clock() >= deadline:
+            raise TimeoutError(
+                f'Tableau did not finish opening "{name}" within '
+                f"{int(timeout_seconds)} seconds. Check that Tableau Desktop "
+                "started, that no sign-in or error dialog is waiting, then run "
+                f"the step again. Last check: {last_error}"
+            )
+        print(f'Waiting for Tableau to finish opening "{name}"...')
+        sleep(poll_seconds)
 
 
 def _clear_clipboard() -> None:

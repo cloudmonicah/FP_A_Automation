@@ -926,10 +926,13 @@ def _temp_twb_path(source: Path) -> Path:
     return temp_twb_path(source, "Validation")
 
 
-def _default_waiter(seconds: float):
+def _default_waiter(settle_seconds: float):
     def wait(tableau_workbook_path):
-        if seconds:
-            time.sleep(seconds)
+        from .tableau_service import wait_for_tableau_workbook
+
+        wait_for_tableau_workbook(
+            tableau_workbook_path, settle_seconds=settle_seconds
+        )
 
     return wait
 
@@ -942,7 +945,7 @@ def run_grouped_individual_validation(
     forecast_year: int,
     only_workbooks: list[str] | None = None,
     tolerance: float = 5.00,
-    open_wait_seconds: float = 8.0,
+    open_wait_seconds: float = 3.0,
     forecast_type: str | None = None,
     opener=None,
     waiter=None,
