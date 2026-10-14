@@ -983,9 +983,9 @@ def run_grouped_individual_validation(
             / route["individual_tableau_workbook"]
         )
 
-        temporary = source.with_name(
-            f"{source.stem}_Validation_" f"{uuid4().hex[:8]}.twb"
-        )
+        from shared.tableau_temp_copies import temp_twb_path
+
+        temporary = temp_twb_path(source, "Validation")
 
         opened = False
 

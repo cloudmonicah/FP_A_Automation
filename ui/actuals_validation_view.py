@@ -1083,7 +1083,8 @@ class ActualsValidationView(tb.Frame):
         try:
             folder.mkdir(parents=True, exist_ok=True)
             for basis in ("MONTH", "YTD"):
-                temporary = source.with_name(f"{source.stem}_Revenue_GUI_{uuid4().hex[:8]}.twb")
+                from shared.tableau_temp_copies import temp_twb_path
+                temporary = temp_twb_path(source, "Revenue_GUI")
                 opened = False
                 try:
                     prepare_revenue_copy(source, temporary, [worksheet], period, basis)

@@ -1351,9 +1351,9 @@ def run_live_opex_validation(
     from automations.actuals.actuals_report_layout import prepare_group_copy
 
     source_tableau_path = Path(tableau_workbook_path)
-    tableau_workbook_path = source_tableau_path.with_name(
-        f"{source_tableau_path.stem}_GroupActuals_{uuid4().hex[:8]}.twb"
-    )
+    from shared.tableau_temp_copies import temp_twb_path
+
+    tableau_workbook_path = temp_twb_path(source_tableau_path, "GroupActuals")
     prepare_group_copy(
         source_tableau_path,
         tableau_workbook_path,

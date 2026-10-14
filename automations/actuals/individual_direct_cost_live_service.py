@@ -104,7 +104,8 @@ def run_individual_direct_cost_live(*, output_paths, closed_period, tableau_sett
         source = Path(route['individual_tableau_workbook'])
         worksheet = route['individual_tableau_worksheet']
         name = _sheet_name(index, company, line)
-        temp = source.with_name(f'{source.stem}_DC_Live_{uuid4().hex[:8]}.twb')
+        from shared.tableau_temp_copies import temp_twb_path
+        temp = temp_twb_path(source, 'DC_Live')
         opened = False
         status, note, count, raw_path = 'ERROR', '', 0, ''
         print(f'[DIRECT COST {index}/{len(routes)}] {company} / {line} | {worksheet}', flush=True)

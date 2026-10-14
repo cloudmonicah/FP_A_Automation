@@ -568,7 +568,9 @@ def _capture_mapping(
         "YTD": ytd_fs,
     }
 
-    temporary = source.with_name(f"{source.stem}_Actuals_{uuid4().hex[:8]}.twb")
+    from shared.tableau_temp_copies import temp_twb_path
+
+    temporary = temp_twb_path(source, "Actuals")
 
     opened = False
     actuals = {}

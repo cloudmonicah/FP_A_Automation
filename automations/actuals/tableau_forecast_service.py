@@ -161,7 +161,9 @@ def set_forecast_start_parameter(
     # The original backup is not recreated on every run.
     # ========================================================
 
-    backup_path = workbook_path.with_name(
+    from shared.tableau_temp_copies import tableau_temp_folder
+
+    backup_path = tableau_temp_folder() / (
         f"{workbook_path.stem}" "_BEFORE_PARAMETER_AUTOMATION.twb"
     )
 
