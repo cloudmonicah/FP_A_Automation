@@ -1767,7 +1767,7 @@ def run_live_direct_cost_validation(
     # 1. READ FINANCIAL STATEMENTS
     # ========================================================
 
-    fs_results = {"ALIV": read_aliv_direct_cost(aliv_fs_path)}
+    fs_results = {"ALIV": read_aliv_direct_cost(aliv_fs_path, closed_period)}
 
     # ========================================================
     # 2. FORECAST START

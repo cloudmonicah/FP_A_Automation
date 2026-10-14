@@ -20,26 +20,8 @@ def read_aliv_period(path, closed_period):
         if 'P & L_' not in wb: raise ValueError('ALIV P & L_ worksheet not found')
         ws=wb['P & L_']
         rows=list(ws.iter_rows(values_only=True))
-        dates=[(r,c,v) for r,row in enumerate(rows[:30]) for c,v in enumerate(row) if _date(v)]
-        if not any((v.year,v.month)==(closed_period.year,closed_period.month) for _,_,v in dates):
-            raise ValueError(f'ALIV statement period does not match {closed_period:%Y-%m}')
-        candidates=[]
-        for r,row in enumerate(rows[:35]):
-            for c,v in enumerate(row):
-                if norm(v)!='ACTUAL': continue
-                preceding=' '.join(norm(rows[rr][cc]) for rr in range(max(0,r-4),r) for cc in range(max(0,c-1),min(len(rows[rr]),c+2)))
-                # Detect YTD from section heading above, even if headings move.
-                is_ytd='YTD' in preceding
-                candidates.append((r,c,is_ytd))
-        # A monthly header must precede a YTD header in both provided layouts.
-        pairs=[]
-        for r,c,ytd in candidates:
-            if ytd: continue
-            next_ytd=[(rr,cc) for rr,cc,flag in candidates if flag and rr==r and cc>c]
-            if next_ytd: pairs.append((r,c,next_ytd[0][1]))
-        if len(pairs)!=1:
-            raise ValueError(f'ALIV Actual/Actual YTD header pairing ambiguous: {pairs}')
-        header,month_col,ytd_col=pairs[0]
+        from automations.actuals.statement_columns import locate_aliv_columns
+        header,month_col,ytd_col=locate_aliv_columns(rows,closed_period,Path(path).name)
         out={}
         for r in range(header+1,len(rows)):
             row=rows[r]

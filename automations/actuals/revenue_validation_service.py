@@ -378,39 +378,24 @@ def aliv_statement_periods(path, closed_period):
                 f"ALIV statement {name} has no 'P & L_' sheet; found {report.sheetnames}."
             )
         sheet = report["P & L_"]
-        found, cell, raw = find_statement_period(sheet)
-        wanted = (closed_period.year, closed_period.month)
-        if found is None:
-            raise ValueError(
-                f"Cannot read the reporting month from ALIV statement {name}: "
-                f"D1 = {raw!r} and no month was found in the top rows. If D1 is a "
-                "formula, open the file in Excel and save it so the value is stored."
-            )
-        if found != wanted:
-            raise ValueError(
-                f"ALIV statement {name} is for {found[0]}-{found[1]:02d} "
-                f"(read {cell} = {raw!r}), but the selected close is "
-                f"{wanted[0]}-{wanted[1]:02d}. Select the matching statement file."
-            )
-        c5, g5, h3 = sheet["C5"].value, sheet["G5"].value, sheet["H3"].value
-        if (
-            str(c5).strip().lower() != "actual"
-            or str(g5).strip().lower() != "actual"
-            or "YTD" not in str(h3).upper()
-        ):
-            raise ValueError(
-                f"ALIV statement {name}: monthly/YTD headers do not match "
-                f"(C5={c5!r}, G5={g5!r}, H3={h3!r}; expected Actual, Actual, ...YTD...)."
-            )
+        from automations.actuals.statement_columns import locate_aliv_columns
+
+        rows = list(sheet.iter_rows(values_only=True))
+        # Columns are found from the headers: the ALIV statement layout changes
+        # between months, so no fixed cell or column letter is assumed.
+        _header, month_col, ytd_col = locate_aliv_columns(rows, closed_period, name)
         result = {"MONTH": {}, "YTD": {}}
-        for row in sheet.iter_rows(values_only=True):
-            key = _canonical_statement_line(row[1])
-            if key in ALIV_REVENUE_LINES and isinstance(row[2], (int, float)):
+        for row in rows:
+            key = _canonical_statement_line(row[1] if len(row) > 1 else None)
+            month = row[month_col] if len(row) > month_col else None
+            if key in ALIV_REVENUE_LINES and isinstance(month, (int, float)):
                 label = ALIV_REVENUE_LINES[key]
                 if label in result["MONTH"]:
                     raise ValueError(f"Duplicate ALIV Revenue statement label: {label}")
-                result["MONTH"][label] = number(row[2])
-                result["YTD"][label] = number(row[6])
+                result["MONTH"][label] = number(month)
+                # July is month 1 of the fiscal year: YTD equals the monthly actual.
+                ytd = month if closed_period.month == 7 else row[ytd_col]
+                result["YTD"][label] = number(ytd)
                 if canonical(label) == "SERVICE REVENUES":
                     break
         missing = set(ALIV_REVENUE_LINES.values()) - set(result["MONTH"])

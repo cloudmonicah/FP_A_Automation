@@ -129,6 +129,7 @@ def _read_direct_cost_section_by_label(
     sheet_name: str,
     required_lines: dict[str, str],
     section_total_label: str,
+    closed_period=None,
 ) -> dict[str, float]:
     """
     Read one Direct Cost section dynamically.
@@ -204,9 +205,28 @@ def _read_direct_cost_section_by_label(
             "B",
         )
 
+        # ----------------------------------------------------
+        # ALIV statements change layout between months, so the
+        # monthly Actual column is found from the headers (never
+        # assumed to be column C). CBL keeps column C.
+        # ----------------------------------------------------
+        actual_column = 3
+        if closed_period is not None and sheet_name == "P & L_":
+            from automations.actuals.statement_columns import (
+                column_letter,
+                locate_aliv_columns,
+            )
+
+            _header, month_col, _ytd = locate_aliv_columns(
+                list(sheet.iter_rows(values_only=True)),
+                closed_period,
+                workbook_path.name,
+            )
+            actual_column = month_col + 1
+
         print(
             "Actual Col:",
-            "C",
+            openpyxl.utils.get_column_letter(actual_column),
         )
 
         print("=" * 70)
@@ -241,7 +261,7 @@ def _read_direct_cost_section_by_label(
 
             actual_value = sheet.cell(
                 row=row_number,
-                column=3,
+                column=actual_column,
             ).value
 
             occurrences.setdefault(
@@ -392,6 +412,7 @@ def _read_direct_cost_section_by_label(
 
 def read_aliv_direct_cost(
     workbook_path: str | Path,
+    closed_period=None,
 ) -> dict[str, float]:
     """
     Read ALIV Direct Cost values.
@@ -408,6 +429,7 @@ def read_aliv_direct_cost(
         sheet_name=("P & L_"),
         required_lines=(ALIV_DIRECT_COST_LINES),
         section_total_label=("Direct Cost"),
+        closed_period=closed_period,
     )
 
 
