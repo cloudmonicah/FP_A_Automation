@@ -41,6 +41,33 @@ SOURCES = [
     ("media", "CBL Media", "Monthly YTD Actual v Budget by Sub account"),
 ]
 
+# Media's YTD comes from a different worksheet than its Monthly capture.
+MEDIA_YTD_TAB = "Year to Date Summary"
+
+
+def resolve_worksheet(path, wanted):
+    """Exact worksheet name in the .twb: exact, then case-insensitive, then
+    a name that ends with / contains ``wanted`` (e.g. 'MEDIA - Year to Date Summary')."""
+    names = [
+        w.get("name", "")
+        for w in ET.parse(path).getroot().findall("./worksheets/worksheet")
+    ]
+    key = " ".join(wanted.lower().split())
+    for test in (
+        lambda n: n == wanted,
+        lambda n: " ".join(n.lower().split()) == key,
+        lambda n: " ".join(n.lower().split()).endswith(key),
+        lambda n: key in " ".join(n.lower().split()),
+    ):
+        hits = [n for n in names if test(n)]
+        if len(hits) == 1:
+            return hits[0]
+    raise ValueError(
+        f"{Path(path).name} has no unique worksheet matching '{wanted}'. "
+        f"Worksheets: {', '.join(names)}"
+    )
+
+
 # Sources that are read as the INDIVIDUAL value only (the same statement line
 # is also read from the Group rollup as the consolidated value).
 INDIVIDUAL_ONLY_LABELS = {
@@ -487,7 +514,10 @@ def source_values(label, rows):
             raise ValueError(f"No Media rows found for {dims}.")
         total = sum(number(r["_actual"]) for r in detail)
         grand = [r for r in rows if canonical(r.get("Company")) == "GRAND TOTAL"]
-        if len(grand) == 1 and abs(number(grand[0]["_actual"]) - total) > 0.5:
+        # Each displayed cell is rounded to a whole dollar, so allow $1 per cell.
+        if len(grand) == 1 and abs(number(grand[0]["_actual"]) - total) > max(
+            1.0, len(detail) * 2.0
+        ):
             raise ValueError(
                 f"Media rows add to {total:,.2f} but Grand Total is "
                 f"{number(grand[0]['_actual']):,.2f}; check the Media lookup."
@@ -676,6 +706,21 @@ def run_live_revenue_validation(
             ]
             if not targets:
                 continue
+            if basis == "YTD":
+                try:
+                    targets = [
+                        (label, resolve_worksheet(source, MEDIA_YTD_TAB))
+                        if label == "CBL Media"
+                        else (label, tab)
+                        for label, tab in targets
+                    ]
+                except Exception as exc:
+                    for label, _ in targets:
+                        for company in AFFECTED_COMPANIES[label]:
+                            notes[basis][company].append(
+                                f"{label}: {type(exc).__name__}: {exc}"
+                            )
+                    continue
             opened = False
             try:
                 # Set this month's filters directly in the source workbook and
