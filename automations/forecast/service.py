@@ -360,19 +360,21 @@ def validate_monthly_forecast(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
-    tolerance: float = 1000.00,
+    tolerance: float = 5.00,
+    progress=None,
 ) -> dict:
+    """Step 3: compare each forecast sheet to its individual Tableau workbook.
 
+    Every mapped route appears in the report (PASS, FAIL, NOT VALIDATED or
+    ACTION REQUIRED); one bad route never stops the run.
+    """
     period = build_forecast_period(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
     )
 
-    # ---------------------------------------------------------
-    # STACY VALIDATION OUTPUT LOCATION
-    # ---------------------------------------------------------
-
+    # Fail before any Tableau work if the report folder is unavailable.
     validation_output_folder = get_forecast_validation_output_folder(
         fiscal_year=period["fiscal_year"],
         forecast_month=period["forecast_month"],
@@ -380,22 +382,16 @@ def validate_monthly_forecast(
         create=True,
     )
 
-    # ---------------------------------------------------------
-    # RUN EXISTING STAGE 5 VALIDATION
-    # ---------------------------------------------------------
-
     result = run_grouped_individual_validation(
         routes=FORECAST_ROUTES,
         forecast_folder=forecast_folder,
         target_month_abbr=period["target_month_abbr"],
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_type=period["forecast_type"],
         tolerance=tolerance,
+        progress=progress,
     )
-
-    # ---------------------------------------------------------
-    # CREATE STACY VALIDATION WORKBOOK
-    # ---------------------------------------------------------
 
     report_path = write_forecast_validation_report(
         validation_result=result,
@@ -407,14 +403,7 @@ def validate_monthly_forecast(
         tolerance=tolerance,
     )
 
-    # ---------------------------------------------------------
-    # RETURN EVERYTHING TO GUI
-    # ---------------------------------------------------------
-
     result["period"] = period
-
     result["validation_output_folder"] = str(validation_output_folder)
-
     result["validation_report"] = str(report_path)
-
     return result
