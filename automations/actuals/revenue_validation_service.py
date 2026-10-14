@@ -45,6 +45,61 @@ def number(value):
     return float(result)
 
 
+_PERIOD_TEXT_FORMATS = (
+    "%B %Y",
+    "%b %Y",
+    "%b-%y",
+    "%B-%y",
+    "%b-%Y",
+    "%Y-%m-%d",
+    "%Y-%m",
+    "%m/%d/%Y",
+    "%m/%d/%y",
+    "%d-%b-%y",
+    "%d-%b-%Y",
+)
+
+
+def statement_year_month(value):
+    """(year, month) from a date, an Excel serial number or period text; else None."""
+    if isinstance(value, (datetime, date)):
+        return value.year, value.month
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if 20000 < value < 80000:  # looks like an unformatted Excel date serial
+            from openpyxl.utils.datetime import from_excel
+
+            found = from_excel(value)
+            return found.year, found.month
+        return None
+    text = " ".join(str(value or "").split())
+    for fmt in _PERIOD_TEXT_FORMATS:
+        try:
+            found = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        return found.year, found.month
+    return None
+
+
+def find_statement_period(sheet, preferred="D1", scan_rows=6, scan_cols=10):
+    """Reporting month of a statement sheet as ((year, month) | None, cell, raw value).
+
+    Uses the usual cell first; if it is empty or unreadable, falls back to the first
+    readable month in the top rows. A mismatch is still an error for the caller, so
+    picking the wrong month's file can never pass silently.
+    """
+    raw = sheet[preferred].value
+    found = statement_year_month(raw)
+    if found:
+        return found, preferred, raw
+    for row in sheet.iter_rows(min_row=1, max_row=scan_rows, max_col=scan_cols):
+        for item in row:
+            found = statement_year_month(item.value)
+            if found:
+                return found, item.coordinate, item.value
+    return None, preferred, raw
+
+
 def prepare_revenue_copy(source, destination, tabs, closed_period, basis):
     root = ET.parse(source).getroot()
     start = date(
@@ -283,6 +338,9 @@ def source_values(label, rows):
                 "Corporate - One off": oneoff,
             },
         }
+    # CBL Group rollup (sheet "CBL FS Rollup View Group Monthly Revenue YTD_SUMMARY").
+    # This sheet has only two dimension columns, so a route is (Bus Code, FS Category).
+    # It has no "GL Account Mapping" column (that exists on the Consumer/Corporate sheets).
     routes = {
         "Government": ("ALIV BUSINESS", "CORPORATE GOVERNMENT"),
         "Other": ("HFC FIXED NETWORK CONSUMER", "OTHER SUBSCRIBER"),
@@ -294,7 +352,12 @@ def source_values(label, rows):
         "CBL": {
             line: unique(
                 rows,
-                **dict(zip(["GL Bus Code Name", "GL FS Category"], route)),
+                **dict(
+                    zip(
+                        ["GL Bus Code Name", "GL FS Category", "GL Account Mapping"],
+                        route,
+                    )
+                ),
             )
             for line, route in routes.items()
         }
@@ -307,21 +370,38 @@ def aliv_statement_periods(path, closed_period):
         _canonical_statement_line,
     )
 
+    name = Path(path).name
     report = load_workbook(path, read_only=True, data_only=True)
     try:
+        if "P & L_" not in report.sheetnames:
+            raise ValueError(
+                f"ALIV statement {name} has no 'P & L_' sheet; found {report.sheetnames}."
+            )
         sheet = report["P & L_"]
-        period = sheet["D1"].value
-        if not isinstance(period, (date, datetime)) or (period.year, period.month) != (
-            closed_period.year,
-            closed_period.month,
-        ):
-            raise ValueError("ALIV statement month does not match selected close.")
+        found, cell, raw = find_statement_period(sheet)
+        wanted = (closed_period.year, closed_period.month)
+        if found is None:
+            raise ValueError(
+                f"Cannot read the reporting month from ALIV statement {name}: "
+                f"D1 = {raw!r} and no month was found in the top rows. If D1 is a "
+                "formula, open the file in Excel and save it so the value is stored."
+            )
+        if found != wanted:
+            raise ValueError(
+                f"ALIV statement {name} is for {found[0]}-{found[1]:02d} "
+                f"(read {cell} = {raw!r}), but the selected close is "
+                f"{wanted[0]}-{wanted[1]:02d}. Select the matching statement file."
+            )
+        c5, g5, h3 = sheet["C5"].value, sheet["G5"].value, sheet["H3"].value
         if (
-            str(sheet["C5"].value).strip().lower() != "actual"
-            or str(sheet["G5"].value).strip().lower() != "actual"
-            or "YTD" not in str(sheet["H3"].value).upper()
+            str(c5).strip().lower() != "actual"
+            or str(g5).strip().lower() != "actual"
+            or "YTD" not in str(h3).upper()
         ):
-            raise ValueError("ALIV statement monthly/YTD headers do not match.")
+            raise ValueError(
+                f"ALIV statement {name}: monthly/YTD headers do not match "
+                f"(C5={c5!r}, G5={g5!r}, H3={h3!r}; expected Actual, Actual, ...YTD...)."
+            )
         result = {"MONTH": {}, "YTD": {}}
         for row in sheet.iter_rows(values_only=True):
             key = _canonical_statement_line(row[1])
