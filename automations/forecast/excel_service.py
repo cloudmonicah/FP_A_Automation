@@ -1053,6 +1053,7 @@ def populate_forecast_sheet_from_tableau_rows(
     excel_sheet_name: str,
     tableau_rows: list[dict],
     fiscal_year: str,
+    expected_forecast_type: str | None = None,
 ) -> dict:
     workbook_path = Path(workbook_path)
     wb = load_workbook(workbook_path, data_only=False)
@@ -1076,6 +1077,19 @@ def populate_forecast_sheet_from_tableau_rows(
 
         structure = _s4_structure(ws)
         forecast_type = _s4_forecast_type(ws, structure)
+        if expected_forecast_type and _s4norm(forecast_type) != _s4norm(
+            expected_forecast_type
+        ):
+            from .validation_service import WrongPeriodError, describe_forecast_type
+
+            raise WrongPeriodError(
+                f"{workbook_path.name} / {ws.title} is for "
+                f"{describe_forecast_type(forecast_type)} ({forecast_type}), but "
+                f"the selected month is {describe_forecast_type(expected_forecast_type)} "
+                f"({expected_forecast_type}). It was not changed. If it was "
+                "skipped in step 1 because it already existed, run step 1 with "
+                "Existing Files = replace."
+            )
         detail_rows = _s4_detail_rows(tableau_rows)
         if not detail_rows:
             raise RuntimeError("No usable Tableau detail rows supplied.")
@@ -1150,8 +1164,9 @@ def populate_forecast_sheet_from_audit(
     audit_workbook_path: str | Path,
     tableau_worksheet_name: str,
     fiscal_year: str,
+    expected_forecast_type: str | None = None,
 ) -> dict:
     rows = read_tableau_audit_sheet(audit_workbook_path, tableau_worksheet_name)
     return populate_forecast_sheet_from_tableau_rows(
-        workbook_path, excel_sheet_name, rows, fiscal_year
+        workbook_path, excel_sheet_name, rows, fiscal_year, expected_forecast_type
     )
