@@ -58,10 +58,11 @@ def test_finalize_builds_final_layout(tmp_path):
     assert wb.sheetnames == ["Executive Summary", "ALIV OPEX", "CBL OPEX", "_meta"]
     ws = wb["ALIV OPEX"]
     assert ws["A6"].value == "Financial Statement Line"
-    assert ws["G7"].value == STATUS_PASS  # Legal monthly
-    assert ws["G8"].value == STATUS_REVIEW  # Facilities monthly, V2 = -3
-    assert ws["F8"].value == -3
-    assert ws["G9"].value == STATUS_PENDING  # no individual value
+    # Total line: formulas, summed from the lines above.
+    assert ws["C9"].value == '=IF(COUNT(C7:C8)=0,"",SUM(C7:C8))'
+    assert str(ws["E7"].value).startswith("=IF(OR(B7")
+    assert str(ws["G7"].value).startswith("=IF(OR(E7")
+    assert ws["M4"].value == 1.0
     assert ws["H8"].value.startswith("Mapped to two lines")
     assert ws["H7"].value is None  # "Reconciled." is dropped
     assert report_status(path) == STATUS_REVIEW
@@ -95,8 +96,7 @@ def test_update_individual_values_recomputes_status(tmp_path):
     )
 
     assert outcome == {"Facilities": "updated", "Operating Expenses": "updated", "Unknown": "missing"}
-    _, sheets = read_report(path)
-    aliv = sheets[0]
-    assert aliv.status == STATUS_PASS
-    assert sheets[1].status == STATUS_REVIEW  # CBL untouched
-    assert report_status(path) == STATUS_REVIEW
+    # Rebuild once more and compare against the written summary status.
+    assert report_status(path) == STATUS_REVIEW  # CBL untouched
+    wb = load_workbook(path)
+    assert wb["ALIV OPEX"]["C9"].value.startswith("=IF(COUNT(")

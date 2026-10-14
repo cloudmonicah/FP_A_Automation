@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Iterable
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -40,7 +41,13 @@ META_SHEET = "_meta"
 OVERALL_PREFIX = "OVERALL VALIDATION STATUS:"
 
 # Lines rendered as totals (bold with a top rule).
-TOTAL_LINES = {"OPERATING EXPENSES", "DIRECT COST", "GROSS REVENUE"}
+TOTAL_LINES = {
+    "OPERATING EXPENSES",
+    "DIRECT COST",
+    "COST OF GOODS SOLD",
+    "GROSS REVENUE",
+    "SERVICE REVENUES",
+}
 
 # --- Styling --------------------------------------------------------------
 FONT_NAME = "Aptos"
@@ -79,6 +86,7 @@ SOURCE_NOTE_COL = 16  # P (hidden)
 LAST_COL = 15  # O
 HEADER_ROW = 6
 FIRST_DATA_ROW = 7
+TOLERANCE_CELL = "$M$4"
 
 
 def canonical(value) -> str:
@@ -187,6 +195,41 @@ def overall_status(statuses: Iterable[str]) -> str:
     if not statuses or any(s != STATUS_PASS for s in statuses):
         return STATUS_PENDING
     return STATUS_PASS
+
+
+def total_components(lines: list[ReportLine]) -> dict[int, tuple[int, int]]:
+    """For each total line, the (first, last) list indexes of the lines it sums.
+
+    A total sums the contiguous non-total lines directly above it.
+    """
+    result = {}
+    start = 0
+    for index, line in enumerate(lines):
+        if line.is_total:
+            if index > start:
+                result[index] = (start, index - 1)
+            start = index + 1
+    return result
+
+
+def apply_total_rules(sheet: CompanySheet) -> None:
+    """Total lines show the sum of the lines above in the Consolidated and
+    Individual columns (the Financial Statement column is never changed).
+    The workbook carries the same rule as an Excel SUM formula."""
+    for index, (first, last) in total_components(sheet.lines).items():
+        total = sheet.lines[index]
+        for period in ("monthly", "ytd"):
+            for attr in ("consolidated", "individual"):
+                parts = [
+                    getattr(getattr(sheet.lines[i], period), attr)
+                    for i in range(first, last + 1)
+                ]
+                numbers = [p for p in parts if is_number(p)]
+                setattr(
+                    getattr(total, period),
+                    attr,
+                    float(sum(numbers)) if numbers else None,
+                )
 
 
 # --- Reading existing workbooks -------------------------------------------
@@ -366,6 +409,46 @@ def _row_height(ws, row) -> float:
     return max(20, 13 * lines + 7)
 
 
+def _add_conditional_formats(ws, line_count: int) -> None:
+    """Colour variances and statuses from their live values, so the colours
+    follow the formulas when someone edits a number."""
+    if not line_count:
+        return
+    last_row = FIRST_DATA_ROW + line_count - 1
+    flag_fill = _fill(VARIANCE_FLAG_FILL)
+    flag_font = Font(name=FONT_NAME, bold=True, color="9C0006")
+    for start in (MONTHLY_COL, YTD_COL):
+        for offset in (3, 4):
+            letter = get_column_letter(start + offset)
+            rng = f"{letter}{FIRST_DATA_ROW}:{letter}{last_row}"
+            ws.conditional_formatting.add(
+                rng,
+                FormulaRule(
+                    formula=[
+                        f"AND(ISNUMBER({letter}{FIRST_DATA_ROW}),"
+                        f"ABS({letter}{FIRST_DATA_ROW})>{TOLERANCE_CELL})"
+                    ],
+                    fill=flag_fill,
+                    font=flag_font,
+                ),
+            )
+        letter = get_column_letter(start + 5)
+        targets = [f"{letter}{FIRST_DATA_ROW}:{letter}{last_row}"]
+        if start == MONTHLY_COL:
+            targets.append("M2")
+        for rng in targets:
+            for label, (fill, color) in STATUS_STYLES.items():
+                ws.conditional_formatting.add(
+                    rng,
+                    CellIsRule(
+                        operator="equal",
+                        formula=[f'"{label}"'],
+                        fill=_fill(fill),
+                        font=Font(name=FONT_NAME, bold=True, color=color),
+                    ),
+                )
+
+
 def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 90
@@ -386,6 +469,19 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
     ws.cell(2, 12).alignment = Alignment(horizontal="right", vertical="center")
     ws.merge_cells(start_row=2, start_column=13, end_row=2, end_column=LAST_COL)
     _style_status(ws.cell(2, 13), sheet.status)
+    last_row = FIRST_DATA_ROW + len(sheet.lines) - 1
+    status_ranges = [
+        f"{get_column_letter(c + 5)}{FIRST_DATA_ROW}:{get_column_letter(c + 5)}{last_row}"
+        for c in (MONTHLY_COL, YTD_COL)
+    ]
+
+    def _count(label):
+        return "+".join(f'COUNTIF({r},"{label}")' for r in status_ranges)
+
+    ws.cell(2, 13).value = (
+        f'=IF({_count(STATUS_REVIEW)}>0,"{STATUS_REVIEW}",'
+        f'IF({_count(STATUS_PASS)}={len(sheet.lines) * 2},"{STATUS_PASS}","{STATUS_PENDING}"))'
+    )
     ws.row_dimensions[2].height = 22
 
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=LAST_COL)
@@ -394,11 +490,20 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
         1,
         "All amounts in $000.  V1 = Consolidated Tableau − Financial Statement.  "
         "V2 = Individual Tableau − Consolidated Tableau.  "
-        f"PASS when both are within ±{TOLERANCE_000:,.0f}.  "
+        "V1, V2, Status and total lines are live Excel formulas.  "
+        "PASS when both variances are within the tolerance in M4.  "
         "Shaded variances are outside tolerance.",
     )
     legend.font = _font(size=9, italic=True, color="6B7785")
     legend.alignment = Alignment(vertical="center", indent=1)
+
+    ws.cell(4, 12, "Tolerance (± $000)").font = _font(size=10, bold=True, color="44546A")
+    ws.cell(4, 12).alignment = Alignment(horizontal="right", vertical="center")
+    tol = ws.cell(4, 13, TOLERANCE_000)
+    tol.font = _font(size=10, bold=True, color="1F3FBF")
+    tol.fill = _fill("FFF9DB")
+    tol.number_format = "0.0"
+    tol.alignment = Alignment(horizontal="center", vertical="center")
 
     # Block banners
     period = meta.closed_period or ""
@@ -439,19 +544,47 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
         if band:
             name.fill = band
 
+        components = total_components(sheet.lines).get(index)
         for start, values in ((MONTHLY_COL, line.monthly), (YTD_COL, line.ytd)):
-            amounts = (values.fs, values.consolidated, values.individual, values.v1, values.v2)
+            fs_c, cons_c, ind_c, v1_c, v2_c = (get_column_letter(start + i) for i in range(5))
+            amounts = (values.fs, values.consolidated, values.individual)
             for offset, amount in enumerate(amounts):
+                if offset > 0 and components:
+                    # Total line: sum of the lines above in this column.
+                    col_letter = get_column_letter(start + offset)
+                    rng = (
+                        f"{col_letter}{FIRST_DATA_ROW + components[0]}:"
+                        f"{col_letter}{FIRST_DATA_ROW + components[1]}"
+                    )
+                    amount = f'=IF(COUNT({rng})=0,"",SUM({rng}))'
                 cell = ws.cell(row, start + offset, amount)
                 cell.number_format = AMOUNT_FORMAT
                 cell.font = _font(size=10, bold=line.is_total)
                 cell.alignment = Alignment(horizontal="right", vertical="center")
-                if offset >= 3 and amount is not None and abs(amount) > TOLERANCE_000:
-                    cell.fill = _fill(VARIANCE_FLAG_FILL)
-                    cell.font = _font(size=10, bold=True, color="9C0006")
-                elif band:
+                if band:
                     cell.fill = band
-            _style_status(ws.cell(row, start + 5), values.status)
+            # V1, V2 and Status are formulas so they show in the formula bar.
+            ws.cell(row, start + 3).value = (
+                f'=IF(OR({fs_c}{row}="",{cons_c}{row}=""),"",ROUND({cons_c}{row}-{fs_c}{row},6))'
+            )
+            ws.cell(row, start + 4).value = (
+                f'=IF(OR({cons_c}{row}="",{ind_c}{row}=""),"",ROUND({ind_c}{row}-{cons_c}{row},6))'
+            )
+            for offset in (3, 4):
+                cell = ws.cell(row, start + offset)
+                cell.number_format = AMOUNT_FORMAT
+                cell.font = _font(size=10, bold=line.is_total)
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if band:
+                    cell.fill = band
+            status = ws.cell(row, start + 5)
+            status.value = (
+                f'=IF(OR({v1_c}{row}="",{v2_c}{row}=""),"{STATUS_PENDING}",'
+                f'IF(AND(ABS({v1_c}{row})<={TOLERANCE_CELL},ABS({v2_c}{row})<={TOLERANCE_CELL}),'
+                f'"{STATUS_PASS}","{STATUS_REVIEW}"))'
+            )
+            status.font = _font(bold=True, size=10)
+            status.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
             note_parts = [values.note()]
             if start == MONTHLY_COL and line.source_note:
@@ -474,6 +607,8 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
                 left=MEDIUM if col == YTD_COL else None,
             )
         row += 1
+
+    _add_conditional_formats(ws, len(sheet.lines))
 
     for col in range(1, LAST_COL + 1):
         ws.cell(HEADER_ROW, col).border = Border(left=MEDIUM if col == YTD_COL else None)
@@ -621,6 +756,8 @@ def build_report_workbook(meta: ReportMeta, sheets: list[CompanySheet]) -> Workb
     summary.sheet_properties.tabColor = NAVY
 
     titles = {}
+    for sheet in sheets:
+        apply_total_rules(sheet)
     for sheet in sheets:
         ws = workbook.create_sheet(sheet.title[:31])
         ws.sheet_properties.tabColor = MONTHLY_COLOR if sheet.company == "ALIV" else YTD_COLOR
