@@ -55,7 +55,12 @@ def read_aliv_period(path, closed_period):
         if closed_period.month == 7:
             inconsistent=[k for k,pair in out.items() if pair is not None and abs(pair[0]-pair[1])>1.0]
             if inconsistent:
-                raise ValueError("ALIV July statement YTD does not equal July monthly actual; confirm fiscal-year basis before validation. Examples: " + ", ".join(inconsistent[:4]))
+                detail="; ".join(f"{k}: month={out[k][0]:,.3f} ytd={out[k][1]:,.3f}" for k in inconsistent[:12])
+                raise ValueError(
+                    f"ALIV July statement YTD does not equal July monthly actual "
+                    f"({len(inconsistent)} lines differ by more than 1.0). "
+                    f"File: {Path(path).name}; header row {header+1}, month column {month_col+1}, "
+                    f"YTD column {ytd_col+1}. Lines: {detail}")
         return out
     finally: wb.close()
 
