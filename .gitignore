@@ -27,3 +27,8 @@ Revenue_Live_Test_Results/
 build/
 dist/
 .venv-build/
+
+# Tableau working copies and Excel lock files
+*.twb
+_Tableau_Temp_Copies/
+~$*
