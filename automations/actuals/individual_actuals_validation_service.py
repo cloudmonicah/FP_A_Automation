@@ -1,5 +1,6 @@
 """Mapped ALIV OPEX monthly/YTD tests, separate from forecast runs."""
 
+from shared.friendly_errors import explain
 from pathlib import Path
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime
@@ -675,7 +676,7 @@ def _capture_mapping(
             print(f"[INDIVIDUAL OPEX] Audit export warning: {audit_exc}", flush=True)
 
     except Exception as exc:
-        capture_error = f"{type(exc).__name__}: {exc}"
+        capture_error = explain(exc)
         print(
             f"[INDIVIDUAL OPEX] ERROR: {capture_error}",
             flush=True,
@@ -732,7 +733,7 @@ def _capture_mapping(
             row[3] = float(actual)
             row[4] = rounded
         except Exception as exc:
-            row[13] = f"Actual extraction error: {type(exc).__name__}: {exc}"
+            row[13] = explain(exc)
             results.append(row)
             continue
 
@@ -761,7 +762,7 @@ def _capture_mapping(
             row[7] = "PASS" if variance == 0 and consolidated_variance == 0 else "FAIL"
 
         except Exception as exc:
-            row[13] = f"{type(exc).__name__}: {exc}"
+            row[13] = explain(exc)
 
         if close_warning:
             row[13] += close_warning
@@ -912,7 +913,7 @@ def run_individual_opex_pilot(
                 print(f"[INDIVIDUAL OPEX] SKIPPED {mapping['company']} / "
                       f"{mapping['fs_line']}: {type(exc).__name__}: {exc}", flush=True)
                 traceback.print_exc()
-                rows = unavailable_pair(f"{type(exc).__name__}: {exc}")
+                rows = unavailable_pair(explain(exc))
 
             groups.append((mapping, rows))
             # Commit every mapping immediately. A later failure cannot erase

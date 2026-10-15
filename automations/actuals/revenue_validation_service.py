@@ -1,5 +1,6 @@
 """Capture selected Revenue TWBs and validate monthly and YTD separately."""
 
+from shared.friendly_errors import explain, friendly
 from datetime import date, datetime
 from pathlib import Path
 from decimal import Decimal
@@ -679,7 +680,7 @@ def run_live_revenue_validation(
         unavailable.add(label)
         for basis in notes:
             for company in AFFECTED_COMPANIES[label]:
-                notes[basis][company].append(f"{label}: {problem}")
+                notes[basis][company].append(f"{label}: {friendly(problem)}")
     statements = {
         "ALIV": aliv_statement_periods(aliv_fs_path, closed_period),
         "CBL": read_cbl_area(cbl_fs_path, "Revenue", closed_period),
@@ -718,7 +719,7 @@ def run_live_revenue_validation(
                     for label, _ in targets:
                         for company in AFFECTED_COMPANIES[label]:
                             notes[basis][company].append(
-                                f"{label}: {type(exc).__name__}: {exc}"
+                                f"{label}: {explain(exc)}"
                             )
                     continue
             opened = False
@@ -735,7 +736,7 @@ def run_live_revenue_validation(
                     for label, _ in targets:
                         for company in AFFECTED_COMPANIES[label]:
                             notes[basis][company].append(
-                                f"{label}: {type(exc).__name__}: {exc}"
+                                f"{label}: {explain(exc)}"
                             )
                     continue
                 filters_used[(basis, source.name)] = filters
@@ -798,7 +799,7 @@ def run_live_revenue_validation(
                         _clear_open_menus()
                         for company in AFFECTED_COMPANIES[label]:
                             notes[basis][company].append(
-                                f"{label}: {type(exc).__name__}: {exc}"
+                                f"{label}: {explain(exc)}"
                             )
             finally:
                 if opened:

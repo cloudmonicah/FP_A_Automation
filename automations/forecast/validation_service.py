@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain
 
 from datetime import date, datetime
 
@@ -1048,7 +1049,7 @@ def run_grouped_individual_validation(
             )
 
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            error = explain(exc)
 
             workbook_record["status"] = "ACTION REQUIRED"
             workbook_record["error"] = error
@@ -1098,8 +1099,10 @@ def run_grouped_individual_validation(
                 try:
                     temporary.unlink()
                 except Exception as exc:
+                    explain(exc)
                     cleanup_warning = (
-                        "Temporary TWB cleanup warning: " f"{type(exc).__name__}: {exc}"
+                        "A temporary file could not be removed; it can be "
+                        "deleted manually."
                     )
 
                     if workbook_record["error"]:
