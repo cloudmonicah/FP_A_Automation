@@ -117,7 +117,7 @@ def _extract(ws, route, closed_period):
     # with no category or company dimension. Permit only a known dedicated
     # workbook, exactly one numeric detail row and the mapped CBL category.
     dimensionless = cat_col is None
-    if dimensionless and not (company == 'CBL' and line == 'PROGRAMMINGFEES'):
+    if dimensionless and not (company == 'CBL' and line.startswith('PROGRAMMINGFEES')):
         return None, None, 'No category column; cannot safely filter this worksheet'
 
     matched = []
@@ -157,7 +157,14 @@ def _extract(ws, route, closed_period):
 
 
 def _extract_company_total(ws, route, closed_period):
-    """Read a Monthly / YTD company total from a month-columns crosstab (OPEX-style tab)."""
+    """Read a Monthly / YTD total for a component capture.
+
+    The content-fees views are read like the Programming fees view. If that does
+    not fit the table, the month-columns company total reading is used instead.
+    """
+    first = _extract(ws, route, closed_period)
+    if first[0] is not None and first[1] is not None:
+        return first
     import csv
     import tempfile
     from automations.actuals.individual_opex_crosstab_parser import extract_monthly_ytd

@@ -44,3 +44,17 @@ def test_media_is_added_to_programming_fees():
     ])
     month, ytd, _ = m._extract_company_total(media, {"company": "CBL", "fs_line": "Programming fees - Media"}, AUG)
     assert (month, ytd) == (62, 162), (month, ytd)
+
+
+def test_media_content_fees_single_row_view_is_added():
+    from automations.actuals import direct_cost_individual_merge as m
+
+    media = _sheet([
+        ["", "", "July 2026", "August 2026", "Grand Total"],
+        ["", "", "Actual", "Actual", "Actual"],
+        ["", "", 70000, 62000, 132000],
+    ])
+    route = {"company": "CBL", "fs_line": "Programming fees - Media", "add_to": "Programming fees",
+             "tableau_categories": []}
+    month, ytd, _ = m._extract_company_total(media, route, AUG)
+    assert (month, ytd) == (62, 132), (month, ytd)
