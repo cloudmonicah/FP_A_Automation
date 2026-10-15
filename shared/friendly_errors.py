@@ -12,6 +12,10 @@ import re
 _RULES: list[tuple[re.Pattern, object]] = []
 
 
+class PlainLanguageError(Exception):
+    """An error whose message was written for the user; shown as is."""
+
+
 def _rule(pattern, message):
     _RULES.append((re.compile(pattern, re.I | re.S), message))
 
@@ -166,6 +170,8 @@ GENERIC = (
 def friendly(error, context: str = "") -> str:
     """Plain-language explanation for an exception or an error string."""
     text = str(error or "").strip()
+    if isinstance(error, PlainLanguageError):
+        return f"{context}: {text}" if context else text
     name = type(error).__name__ if isinstance(error, BaseException) else ""
     haystack = f"{name} {text}"
     for pattern, message in _RULES:
