@@ -31,6 +31,10 @@ DEFAULTS: dict[str, Any] = {
     "validation_output_root": "",
     # Forecast validation output. Blank = the synced OneDrive shortcut folder.
     "forecast_validation_output_root": "",
+    # Monthly Forecast page: the last paths used (filled in automatically).
+    "forecast_source_folder": "",
+    "forecast_output_folder": "",
+    "forecast_tableau_workbook": "",
     # Default folders on the Initial Budget Setup page.
     "budget_source_folder": r"E:\Sources\Budgets",
     "budget_output_folder": r"E:\Sources\Forecast",

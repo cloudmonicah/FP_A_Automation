@@ -19,6 +19,7 @@ from automations.forecast.service import (
     prepare_monthly_forecast,
     validate_monthly_forecast,
 )
+from shared import settings
 from shared.forecast_output_paths import get_forecast_validation_output_folder
 from shared.forecast_validation_report import counts as result_counts
 from shared.forecast_validation_report import load_saved_results, report_path_for
@@ -64,9 +65,11 @@ class ForecastRefreshView(tb.Frame):
     def __init__(self, parent) -> None:
         super().__init__(parent)
 
-        self.source_folder_var = tb.StringVar()
-        self.output_folder_var = tb.StringVar()
-        self.tableau_workbook_var = tb.StringVar()
+        # Start from the paths used last time (or the team defaults).
+        remembered = self._remembered_paths()
+        self.source_folder_var = tb.StringVar(value=remembered["forecast_source_folder"])
+        self.output_folder_var = tb.StringVar(value=remembered["forecast_output_folder"])
+        self.tableau_workbook_var = tb.StringVar(value=remembered["forecast_tableau_workbook"])
         self.overwrite_var = tb.StringVar(value="skip")
 
         self.status_var = tb.StringVar(value="Ready")
@@ -579,13 +582,39 @@ class ForecastRefreshView(tb.Frame):
             self._error("Tableau Forecast Workbook", "Select the FY Forecast Tableau .twb workbook.")
             return None
 
-        return {
+        inputs = {
             "period": period,
             "source_folder": source_text,
             "output_folder": output_text,
             "tableau_workbook": tableau_text,
             "overwrite_mode": self.overwrite_var.get(),
         }
+        self._remember_paths(inputs)
+        return inputs
+
+    @staticmethod
+    def _remembered_paths() -> dict:
+        keys = ("forecast_source_folder", "forecast_output_folder", "forecast_tableau_workbook")
+        try:
+            return {key: str(settings.get_path(key) or "") for key in keys}
+        except Exception:
+            log.warning("Could not read the remembered forecast paths", exc_info=True)
+            return {key: "" for key in keys}
+
+    @staticmethod
+    def _remember_paths(inputs: dict) -> None:
+        """Save the paths that were just used, for next time (best effort)."""
+        values = {
+            "forecast_source_folder": inputs["source_folder"],
+            "forecast_output_folder": inputs["output_folder"],
+            "forecast_tableau_workbook": inputs["tableau_workbook"],
+        }
+        values = {key: value for key, value in values.items() if value}
+        try:
+            if any(settings.get(key) != value for key, value in values.items()):
+                settings.save_user_settings(values)
+        except Exception:
+            log.warning("Could not remember the forecast paths", exc_info=True)
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
