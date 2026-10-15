@@ -26,6 +26,17 @@ OPEX_MAPPINGS = [
             "OPEX", "ALIV Gen & Admin_Finance.twb"
         ),
         "individual_tableau_worksheet": "Monthly Actual v Budget by Sub account",
+        # G&A is the SUM of two individual workbooks.
+        "individual_sources": [
+            {
+                "workbook": workbook_path("OPEX", "ALIV Gen & Admin_Finance.twb"),
+                "worksheet": "Monthly Actual v Budget by Sub account",
+            },
+            {
+                "workbook": workbook_path("OPEX", "ALIV Head Office.twb"),
+                "worksheet": "Monthly Sub Account Actual v Budget",
+            },
+        ],
         "individual_actuals_enabled": True,
     },
     {
@@ -174,6 +185,17 @@ OPEX_MAPPINGS = [
             "OPEX", "CBL Gen & Admin_Finance.twb"
         ),
         "individual_tableau_worksheet": "Monthly YTD Actual v Budget by Sub account",
+        # G&A is the SUM of two individual workbooks.
+        "individual_sources": [
+            {
+                "workbook": workbook_path("OPEX", "CBL Gen & Admin_Finance.twb"),
+                "worksheet": "Monthly YTD Actual v Budget by Sub account",
+            },
+            {
+                "workbook": workbook_path("OPEX", "CBL Head Office.twb"),
+                "worksheet": "Monthly Sub Account Actual v Budget",
+            },
+        ],
         "individual_actuals_enabled": True,
     },
     {
