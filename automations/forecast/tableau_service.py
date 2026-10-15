@@ -461,6 +461,15 @@ def _get_tableau_window(
             # Bring the selected forecast workbook forward.
             # ------------------------------------------------
 
+            # Only pause when focus actually had to move: this function
+            # runs several times per crosstab, and the pause added up.
+            try:
+                already_in_front = bool(foreground_handle) and (
+                    workbook_window.handle == foreground_handle
+                )
+            except Exception:
+                already_in_front = False
+
             try:
 
                 workbook_window.set_focus()
@@ -469,7 +478,8 @@ def _get_tableau_window(
 
                 pass
 
-            time.sleep(0.8)
+            if not already_in_front:
+                time.sleep(0.8)
 
             try:
 
@@ -505,9 +515,11 @@ def _get_tableau_window(
 
             try:
                 # Maximize the window that was selected and checked above
-                # (this used the leftover loop variable before).
-                workbook_window.maximize()
-                time.sleep(1.0)
+                # (this used the leftover loop variable before), unless
+                # it already is.
+                if not _is_maximized(workbook_window):
+                    workbook_window.maximize()
+                    time.sleep(1.0)
             except Exception as exc:
                 print(f"WARNING: Could not maximize Tableau window: {exc}")
 
@@ -551,6 +563,16 @@ def _get_tableau_window(
         f"{max_attempts} attempts. "
         "Tableau windows detected: " + "; ".join(last_titles)
     )
+
+
+def _is_maximized(window) -> bool:
+    """True if the window is already maximized (False when unknown)."""
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.IsZoomed(window.handle))
+    except Exception:
+        return False
 
 
 def wait_for_tableau_workbook(
@@ -636,7 +658,7 @@ def _clear_clipboard() -> None:
 # ============================================================
 
 
-def _get_clipboard_text() -> str:
+def _get_clipboard_text(timeout_seconds: float = 5.0) -> str:
     """
     Read text from the Windows clipboard using the native
     Windows clipboard API.
@@ -681,7 +703,9 @@ def _get_clipboard_text() -> str:
     # Give Tableau a few chances to finish writing to the
     # clipboard before failing.
     # --------------------------------------------------------
-    for attempt in range(10):
+    deadline = time.monotonic() + timeout_seconds
+
+    while time.monotonic() < deadline:
 
         # ----------------------------------------------------
         # Check whether Unicode text is available.
@@ -1654,13 +1678,15 @@ def get_tableau_crosstab_rows(
 
     print("Tableau Crosstab copy command executed.")
 
-    time.sleep(4)
+    # The clipboard was cleared before the copy, so wait for Tableau's text
+    # to arrive instead of a fixed 4 seconds: small tables are read at once,
+    # large ones get up to 60 seconds instead of failing after about 9.
 
     # ========================================================
     # STEP 7 - READ CLIPBOARD
     # ========================================================
 
-    clipboard_text = _get_clipboard_text()
+    clipboard_text = _get_clipboard_text(timeout_seconds=60)
 
     if raw_output_folder is not None:
 
