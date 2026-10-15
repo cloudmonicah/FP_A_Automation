@@ -1407,23 +1407,68 @@ def select_tableau_worksheet(
 # ============================================================
 
 
+def _looks_numeric(text: str) -> bool:
+    cleaned = re.sub(r"[\s$,%()]", "", str(text or ""))
+    if not cleaned or cleaned in {"-", "–"}:
+        return False
+    try:
+        float(cleaned)
+        return True
+    except ValueError:
+        return False
+
+
 def _parse_crosstab_text(
     clipboard_text: str,
 ) -> list[dict]:
     """
-    Convert Tableau's tab-separated Crosstab output into
-    Python dictionaries.
+    Convert Tableau's tab-separated Crosstab output into Python dictionaries.
+
+    Tableau writes one header row, or two when columns are nested (e.g. the
+    month on the first row and the measure on the second; the month is only
+    written above the first column of its group). Two header rows are
+    combined into one name per column ("October 2026 Forecast") so no column
+    is lost and the second header row is not read as data.
     """
 
     if not clipboard_text.strip():
         raise RuntimeError("Tableau copied an empty crosstab.")
 
-    reader = csv.DictReader(
-        StringIO(clipboard_text),
-        delimiter="\t",
-    )
+    table = [
+        [cell.strip() for cell in row]
+        for row in csv.reader(StringIO(clipboard_text), delimiter="\t")
+    ]
+    table = [row for row in table if any(row)]
+    if len(table) < 2:
+        raise RuntimeError("No data rows were found in the Tableau crosstab.")
 
-    rows = [dict(row) for row in reader]
+    header = table[0]
+    body_start = 1
+    second = table[1]
+    names = [name for name in header if name]
+    repeated = len(names) != len(set(names))
+    filled_below = any(not top and below for top, below in zip(header, second))
+    if (repeated or filled_below) and not any(_looks_numeric(cell) for cell in second):
+        width = max(len(header), len(second))
+        header = header + [""] * (width - len(header))
+        second = second + [""] * (width - len(second))
+        combined, current = [], ""
+        for top, below in zip(header, second):
+            current = top or current
+            combined.append(" ".join(part for part in (current, below) if part))
+        header = combined
+        body_start = 2
+
+    # Keep every column even if two still share a name.
+    unique, counts = [], {}
+    for name in header:
+        counts[name] = counts.get(name, 0) + 1
+        unique.append(name if counts[name] == 1 else f"{name} ({counts[name]})")
+
+    rows = []
+    for raw in table[body_start:]:
+        raw = raw + [""] * (len(unique) - len(raw))
+        rows.append(dict(zip(unique, raw)))
 
     if not rows:
         raise RuntimeError("No data rows were found in the Tableau crosstab.")

@@ -304,7 +304,10 @@ def get_individual_tableau_grand_total(
 
     total_column = next(
         (h for h in headers if _norm(h) == "grand total"),
-        next((h for h in headers if _norm(h) == "total"), None),
+        next(
+            (h for h in headers if _norm(h).startswith("grand total")),
+            next((h for h in headers if _norm(h) == "total"), None),
+        ),
     )
     if total_column is None:
         raise RuntimeError(

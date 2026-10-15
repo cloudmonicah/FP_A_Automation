@@ -1,5 +1,5 @@
 from __future__ import annotations
-from shared.friendly_errors import explain
+from shared.friendly_errors import PlainLanguageError, explain
 
 from pathlib import Path
 from typing import Any
@@ -736,25 +736,104 @@ def _s4_month(value: Any) -> int | None:
     return None
 
 
-def _s4_tableau_months(rows: list[dict]) -> dict[int, Any]:
+class MissingMonthsError(PlainLanguageError, RuntimeError):
+    """Tableau did not provide all 12 months of the fiscal year."""
+
+
+_MONTH_FORMATS = (
+    "%B %Y", "%b %Y", "%B-%Y", "%b-%Y", "%b-%y", "%b %y", "%B %y",
+    "%Y-%m", "%Y-%m-%d", "%m/%d/%Y", "%m/%Y", "%Y/%m",
+)
+
+
+def _s4_month_year(value: Any) -> tuple[int | None, int] | None:
+    """(year, month) of a month header; year is None when the header has none."""
+    if isinstance(value, datetime) or (
+        hasattr(value, "month") and hasattr(value, "year")
+    ):
+        return int(value.year), int(value.month)
+    text = " ".join(str(value or "").split())
+    if not text or text.startswith("="):
+        return None
+    # Tableau may add the measure, e.g. "October 2026 Forecast".
+    for candidate in (text, *re.findall(r"[A-Za-z]{3,9}[ -]\d{2,4}|\d{1,4}[/-]\d{1,2}(?:[/-]\d{2,4})?", text)):
+        for fmt in _MONTH_FORMATS:
+            try:
+                parsed = datetime.strptime(candidate, fmt)
+            except ValueError:
+                continue
+            return parsed.year, parsed.month
+    month = _s4_month(text)
+    return (None, month) if month else None
+
+
+def _fiscal_months(fiscal_year: str) -> dict[tuple[int, int], int]:
+    """{(year, month): month} for the July-June fiscal year, e.g. FY27."""
+    match = re.search(r"(\d{2,4})", str(fiscal_year))
+    if not match:
+        raise ValueError(f"Invalid fiscal year: {fiscal_year}")
+    end = int(match.group(1))
+    end = end + 2000 if end < 100 else end
+    return {(end - 1 if m >= 7 else end, m): m for m in FISCAL_MONTH_ORDER}
+
+
+def _month_label(year_month) -> str:
+    year, month = year_month
+    return f"{calendar.month_abbr[month]} {year}" if year else calendar.month_abbr[month]
+
+
+def _s4_tableau_months(rows: list[dict], fiscal_year: str, sheet_label: str = "") -> dict[int, Any]:
+    """Map each fiscal month (1-12) to its Tableau column, for ALL 12 months.
+
+    Columns are matched by month AND year, so a Tableau view showing another
+    fiscal year (or a rolling window) never puts, say, Sep 2027 into the
+    Sep 2026 column. Columns outside the fiscal year are ignored. If Tableau
+    does not provide every month, nothing is written: blank months would
+    silently wipe values.
+    """
     if not rows:
         raise RuntimeError("No Tableau detail rows supplied.")
-    lookup = {}
+    wanted = _fiscal_months(fiscal_year)
+    found: dict[int, list] = {}
+    seen_labels = []
     for header in rows[0].keys():
-        month = _s4_month(header)
-        if month is None:
+        parsed = _s4_month_year(header)
+        if parsed is None:
             continue
-        if month in lookup:
-            raise RuntimeError(f"Duplicate Tableau month: {MONTH_ABBR[month]}")
-        lookup[month] = header
+        seen_labels.append(_month_label(parsed))
+        year, month = parsed
+        if year is not None and (year, month) not in wanted:
+            continue  # another fiscal year
+        found.setdefault(month, []).append(header)
+
+    lookup = {}
+    for month, headers in found.items():
+        if len(headers) > 1:
+            # Several measures for one month (e.g. Actual and Forecast): the
+            # forecast workbook takes the Forecast column.
+            forecast = [h for h in headers if "forecast" in str(h).casefold()]
+            if len(forecast) != 1:
+                raise RuntimeError(
+                    f"Duplicate Tableau month: {MONTH_ABBR[month]} appears in "
+                    f"columns {', '.join(map(str, headers))}"
+                )
+            headers = forecast
+        lookup[month] = headers[0]
+
     if not lookup:
         raise RuntimeError("No Tableau fiscal month columns were found.")
-    missing = [MONTH_ABBR[m] for m in FISCAL_MONTH_ORDER if m not in lookup]
+
+    missing = [m for m in FISCAL_MONTH_ORDER if m not in lookup]
     if missing:
-        print(
-            "[PARTIAL MONTHS] Missing from Tableau: "
-            + ", ".join(missing)
-            + ". Excel values for those months will be blank."
+        expected = [_month_label(ym) for ym in sorted(wanted, key=lambda ym: FISCAL_MONTH_ORDER[ym[1]])]
+        where = f' for "{sheet_label}"' if sheet_label else ""
+        raise MissingMonthsError(
+            f"Tableau gave {len(lookup)} of the 12 months{where} "
+            f"({', '.join(seen_labels) or 'none'}); {fiscal_year} needs "
+            f"{expected[0]} to {expected[-1]}. Missing: "
+            f"{', '.join(MONTH_ABBR[m] for m in missing)}. The sheet was not "
+            "changed. Check that the Tableau tab shows all 12 months of the "
+            "fiscal year (its date filter or the Forecast Start parameter)."
         )
     return lookup
 
@@ -1094,7 +1173,9 @@ def populate_forecast_sheet_from_tableau_rows(
         detail_rows = _s4_detail_rows(tableau_rows)
         if not detail_rows:
             raise RuntimeError("No usable Tableau detail rows supplied.")
-        tableau_months = _s4_tableau_months(detail_rows)
+        tableau_months = _s4_tableau_months(
+            detail_rows, fiscal_year, f"{workbook_path.name} / {ws.title}"
+        )
 
         first, old_last = _s4_current_detail(ws, structure)
         old_count = max(0, old_last - first + 1)
