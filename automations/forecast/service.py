@@ -7,12 +7,15 @@ import re
 import xml.etree.ElementTree as ET
 
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+
+from shared import excel_style as style
 
 from .excel_service import (
     create_forecast_refresh,
     populate_forecast_sheet_from_audit,
 )
-from .mapping import FORECAST_ROUTES
+from .mapping import FORECAST_CATEGORIES, routes_for
 from .tableau_service import set_forecast_start_parameter
 from shared.forecast_output_paths import (
     get_forecast_validation_output_folder,
@@ -265,6 +268,13 @@ def write_tableau_audit_workbook(
             ws.append(headers)
             for row in rows:
                 ws.append([row.get(header) for header in headers])
+            style.header_row(ws, 1, 1, len(headers))
+            for data_row in ws.iter_rows(min_row=2):
+                for cell in data_row:
+                    cell.font = style.font()
+            for col in range(1, len(headers) + 1):
+                ws.column_dimensions[get_column_letter(col)].width = 16
+            ws.freeze_panes = "A2"
 
     if not wb.sheetnames:
         wb.create_sheet("No Data")
@@ -290,6 +300,16 @@ def _resolve_target_filename(
     return resolved
 
 
+def _categories_tag(categories) -> str:
+    if not categories or set(categories) >= set(FORECAST_CATEGORIES):
+        return "All"
+    return "_".join(
+        category.replace(" ", "")
+        for category in FORECAST_CATEGORIES
+        if category in categories
+    )
+
+
 def _close_consolidated(path):
     from automations.actuals.tableau_desktop_close_service import (
         close_tableau_forecast_workbook,
@@ -310,6 +330,7 @@ def populate_monthly_forecast_from_tableau(
     extractor=None,
     closer=None,
     progress=None,
+    categories: list[str] | None = None,
 ) -> dict:
     """
     Step 2: open a temp copy of the consolidated workbook set to the period,
@@ -325,7 +346,7 @@ def populate_monthly_forecast_from_tableau(
         wait_for_tableau_workbook,
     )
 
-    routes = FORECAST_ROUTES if routes is None else routes
+    routes = routes_for(categories) if routes is None else routes
     opener = opener or open_tableau_workbook
     waiter = waiter or wait_for_tableau_workbook
     extractor = extractor or extract_forecast_worksheets
@@ -370,7 +391,12 @@ def populate_monthly_forecast_from_tableau(
             # A copy Tableau still holds is removed later by stale cleanup.
             temporary.unlink(missing_ok=True)
 
-    audit_path = folder / f"Tableau_Forecast_Extract_{forecast_year}-{forecast_month:02d}.xlsx"
+    # One extract file per category run, so running Revenue never overwrites
+    # the OPEX extract.
+    audit_path = folder / (
+        f"Tableau_Forecast_Extract_{forecast_year}-{forecast_month:02d}"
+        f"_{_categories_tag(categories)}.xlsx"
+    )
     write_tableau_audit_workbook(extracts, audit_path)
 
     passed = []
@@ -405,6 +431,7 @@ def populate_monthly_forecast_from_tableau(
             )
             passed.append(
                 {
+                    "category": route.get("category", ""),
                     "workbook": target_name,
                     "worksheet": route["excel_sheet"],
                     "tableau_worksheet": route["tableau_worksheet"],
@@ -414,6 +441,7 @@ def populate_monthly_forecast_from_tableau(
         except Exception as exc:
             failed.append(
                 {
+                    "category": route.get("category", ""),
                     "workbook": target_name,
                     "worksheet": route["excel_sheet"],
                     "tableau_worksheet": route["tableau_worksheet"],
@@ -423,6 +451,7 @@ def populate_monthly_forecast_from_tableau(
 
     return {
         "period": period,
+        "categories": list(categories or FORECAST_CATEGORIES),
         "audit_workbook": str(audit_path),
         "passed": passed,
         "failed": failed,
@@ -442,12 +471,22 @@ def validate_monthly_forecast(
     forecast_year: int,
     tolerance: float = 5.00,
     progress=None,
+    categories: list[str] | None = None,
+    routes: list[dict] | None = None,
+    runner=None,
 ) -> dict:
     """Step 3: compare each forecast sheet to its individual Tableau workbook.
 
-    Every mapped route appears in the report (PASS, FAIL, NOT VALIDATED or
-    ACTION REQUIRED); one bad route never stops the run.
+    Runs the routes of ``categories`` (all when None). Every route of those
+    categories appears in the result (PASS, FAIL, NOT VALIDATED or ACTION
+    REQUIRED); one bad route never stops the run.
+
+    The month's report keeps the latest result of every category: running
+    Revenue replaces Revenue's rows and leaves the other categories alone.
     """
+    categories = list(categories or FORECAST_CATEGORIES)
+    routes = routes_for(categories) if routes is None else routes
+    runner = runner or run_grouped_individual_validation
     period = build_forecast_period(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
@@ -462,8 +501,8 @@ def validate_monthly_forecast(
         create=True,
     )
 
-    result = run_grouped_individual_validation(
-        routes=FORECAST_ROUTES,
+    result = runner(
+        routes=routes,
         forecast_folder=forecast_folder,
         target_month_abbr=period["target_month_abbr"],
         forecast_month=forecast_month,
@@ -481,8 +520,10 @@ def validate_monthly_forecast(
         forecast_year=period["forecast_year"],
         forecast_type=period["forecast_type"],
         tolerance=tolerance,
+        categories_run=categories,
     )
 
+    result["categories"] = categories
     result["period"] = period
     result["validation_output_folder"] = str(validation_output_folder)
     result["validation_report"] = str(report_path)

@@ -67,6 +67,7 @@ Settings are layered, later ones win:
 | `workbooks_root` | Folder holding the `OPEX`, `SAC`, `Revenue` and `Direct Cost` workbook folders. |
 | `validation_output_root` | Where actuals validation reports go. Blank = find the synced `Finance_Validation_Results` OneDrive folder. |
 | `forecast_validation_output_root` | Where forecast validation reports go. Blank = the synced OneDrive shortcut. |
+| `forecast_source_folder`, `forecast_output_folder`, `forecast_tableau_workbook` | Monthly Forecast page paths. The app remembers the last ones each person used; set them here to give everyone a starting point (for example the shared consolidated workbook). |
 | `budget_source_folder`, `budget_output_folder` | Defaults for the Initial Budget Setup page. |
 | `test_mode` | Shows the TEST MODE badge. |
 | `log_level` | `INFO` normally; `DEBUG` when chasing a problem. |

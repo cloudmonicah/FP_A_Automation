@@ -461,6 +461,15 @@ def _get_tableau_window(
             # Bring the selected forecast workbook forward.
             # ------------------------------------------------
 
+            # Only pause when focus actually had to move: this function
+            # runs several times per crosstab, and the pause added up.
+            try:
+                already_in_front = bool(foreground_handle) and (
+                    workbook_window.handle == foreground_handle
+                )
+            except Exception:
+                already_in_front = False
+
             try:
 
                 workbook_window.set_focus()
@@ -469,7 +478,8 @@ def _get_tableau_window(
 
                 pass
 
-            time.sleep(0.8)
+            if not already_in_front:
+                time.sleep(0.8)
 
             try:
 
@@ -505,9 +515,11 @@ def _get_tableau_window(
 
             try:
                 # Maximize the window that was selected and checked above
-                # (this used the leftover loop variable before).
-                workbook_window.maximize()
-                time.sleep(1.0)
+                # (this used the leftover loop variable before), unless
+                # it already is.
+                if not _is_maximized(workbook_window):
+                    workbook_window.maximize()
+                    time.sleep(1.0)
             except Exception as exc:
                 print(f"WARNING: Could not maximize Tableau window: {exc}")
 
@@ -551,6 +563,16 @@ def _get_tableau_window(
         f"{max_attempts} attempts. "
         "Tableau windows detected: " + "; ".join(last_titles)
     )
+
+
+def _is_maximized(window) -> bool:
+    """True if the window is already maximized (False when unknown)."""
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.user32.IsZoomed(window.handle))
+    except Exception:
+        return False
 
 
 def wait_for_tableau_workbook(
@@ -636,7 +658,7 @@ def _clear_clipboard() -> None:
 # ============================================================
 
 
-def _get_clipboard_text() -> str:
+def _get_clipboard_text(timeout_seconds: float = 5.0) -> str:
     """
     Read text from the Windows clipboard using the native
     Windows clipboard API.
@@ -681,7 +703,9 @@ def _get_clipboard_text() -> str:
     # Give Tableau a few chances to finish writing to the
     # clipboard before failing.
     # --------------------------------------------------------
-    for attempt in range(10):
+    deadline = time.monotonic() + timeout_seconds
+
+    while time.monotonic() < deadline:
 
         # ----------------------------------------------------
         # Check whether Unicode text is available.
@@ -1383,23 +1407,68 @@ def select_tableau_worksheet(
 # ============================================================
 
 
+def _looks_numeric(text: str) -> bool:
+    cleaned = re.sub(r"[\s$,%()]", "", str(text or ""))
+    if not cleaned or cleaned in {"-", "–"}:
+        return False
+    try:
+        float(cleaned)
+        return True
+    except ValueError:
+        return False
+
+
 def _parse_crosstab_text(
     clipboard_text: str,
 ) -> list[dict]:
     """
-    Convert Tableau's tab-separated Crosstab output into
-    Python dictionaries.
+    Convert Tableau's tab-separated Crosstab output into Python dictionaries.
+
+    Tableau writes one header row, or two when columns are nested (e.g. the
+    month on the first row and the measure on the second; the month is only
+    written above the first column of its group). Two header rows are
+    combined into one name per column ("October 2026 Forecast") so no column
+    is lost and the second header row is not read as data.
     """
 
     if not clipboard_text.strip():
         raise RuntimeError("Tableau copied an empty crosstab.")
 
-    reader = csv.DictReader(
-        StringIO(clipboard_text),
-        delimiter="\t",
-    )
+    table = [
+        [cell.strip() for cell in row]
+        for row in csv.reader(StringIO(clipboard_text), delimiter="\t")
+    ]
+    table = [row for row in table if any(row)]
+    if len(table) < 2:
+        raise RuntimeError("No data rows were found in the Tableau crosstab.")
 
-    rows = [dict(row) for row in reader]
+    header = table[0]
+    body_start = 1
+    second = table[1]
+    names = [name for name in header if name]
+    repeated = len(names) != len(set(names))
+    filled_below = any(not top and below for top, below in zip(header, second))
+    if (repeated or filled_below) and not any(_looks_numeric(cell) for cell in second):
+        width = max(len(header), len(second))
+        header = header + [""] * (width - len(header))
+        second = second + [""] * (width - len(second))
+        combined, current = [], ""
+        for top, below in zip(header, second):
+            current = top or current
+            combined.append(" ".join(part for part in (current, below) if part))
+        header = combined
+        body_start = 2
+
+    # Keep every column even if two still share a name.
+    unique, counts = [], {}
+    for name in header:
+        counts[name] = counts.get(name, 0) + 1
+        unique.append(name if counts[name] == 1 else f"{name} ({counts[name]})")
+
+    rows = []
+    for raw in table[body_start:]:
+        raw = raw + [""] * (len(unique) - len(raw))
+        rows.append(dict(zip(unique, raw)))
 
     if not rows:
         raise RuntimeError("No data rows were found in the Tableau crosstab.")
@@ -1654,13 +1723,15 @@ def get_tableau_crosstab_rows(
 
     print("Tableau Crosstab copy command executed.")
 
-    time.sleep(4)
+    # The clipboard was cleared before the copy, so wait for Tableau's text
+    # to arrive instead of a fixed 4 seconds: small tables are read at once,
+    # large ones get up to 60 seconds instead of failing after about 9.
 
     # ========================================================
     # STEP 7 - READ CLIPBOARD
     # ========================================================
 
-    clipboard_text = _get_clipboard_text()
+    clipboard_text = _get_clipboard_text(timeout_seconds=60)
 
     if raw_output_folder is not None:
 
@@ -2560,34 +2631,43 @@ def extract_forecast_worksheets(
     results: dict[str, list[dict]] = {}
     errors: dict[str, str] = {}
 
+    def recover() -> None:
+        # Close menus and never reuse the clipboard from a previous worksheet.
+        try:
+            _clear_clipboard()
+            window = _get_tableau_window(tableau_workbook_path=workbook_path)
+            _force_tableau_to_foreground(window)
+            window.type_keys("{ESC}{ESC}{ESC}")
+        except Exception as recovery_exc:
+            print(f"[TABLEAU RECOVERY] {recovery_exc}")
+
     for sequence_number, worksheet_name in enumerate(unique_names, start=1):
         if progress:
             progress(sequence_number - 1, len(unique_names), worksheet_name)
-        try:
-            rows = get_tableau_crosstab_rows(
-                worksheet_name=worksheet_name,
-                raw_output_folder=raw_output_folder,
-                sequence_number=sequence_number,
-                tableau_workbook_path=workbook_path,
-            )
-            if not rows:
-                raise RuntimeError("Tableau returned an empty crosstab")
-            results[worksheet_name] = rows
-        except Exception as exc:
-            errors[worksheet_name] = f"{type(exc).__name__}: {exc}"
-            print(
-                f"[TABLEAU EXTRACT FAILED] {worksheet_name}: {errors[worksheet_name]}"
-            )
-            # Recover menu state before selecting the next worksheet.
-            # Never reuse the clipboard from a previous worksheet.
+        # A large tab can still be calculating when its menus are opened, so
+        # the Copy submenu never appears. One more full try - wait, select
+        # the tab again, copy again - fixes that without failing the route.
+        for attempt in (1, 2):
             try:
-                _clear_clipboard()
-                window = _get_tableau_window(tableau_workbook_path=workbook_path)
-                _force_tableau_to_foreground(window)
-                window.type_keys("{ESC}{ESC}{ESC}")
-            except Exception as recovery_exc:
-                print(f"[TABLEAU RECOVERY] {recovery_exc}")
-            time.sleep(1)
+                rows = get_tableau_crosstab_rows(
+                    worksheet_name=worksheet_name,
+                    raw_output_folder=raw_output_folder,
+                    sequence_number=sequence_number,
+                    tableau_workbook_path=workbook_path,
+                )
+                if not rows:
+                    raise RuntimeError("Tableau returned an empty crosstab")
+                results[worksheet_name] = rows
+                errors.pop(worksheet_name, None)
+                break
+            except Exception as exc:
+                errors[worksheet_name] = f"{type(exc).__name__}: {exc}"
+                print(
+                    f"[TABLEAU EXTRACT FAILED] {worksheet_name} "
+                    f"(try {attempt}/2): {errors[worksheet_name]}"
+                )
+                recover()
+                time.sleep(10 if attempt == 1 else 1)
 
     # Return failures explicitly to the caller without pretending the
     # failed worksheet was successfully extracted.

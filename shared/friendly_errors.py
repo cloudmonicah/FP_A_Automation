@@ -25,6 +25,133 @@ def _quoted(text):
     return found.group(1) if found else None
 
 
+# --- Monthly Forecast --------------------------------------------------------
+# Listed first so these specific messages win over the general rules below.
+
+
+def _as_written(match, text):
+    return text
+
+
+# Messages already written for the person running the app.
+_rule(
+    r"Tableau did not finish opening|is in FY\d\d \(July-June\)|is not in the Forecast "
+    r"Output Folder|Forecast Output Folder not found|Expected 12 fiscal month columns"
+    r"|crosstab has no \"Grand Total\"",
+    _as_written,
+)
+_rule(
+    r"July is the initial fiscal-year forecast month",
+    "July starts the fiscal year, so its forecast is created with Initial Budget "
+    "Setup, not on this page. Pick another month.",
+)
+_rule(
+    r"No valid (?P<fy>FY\d\d) forecast workbooks were found before (?P<m>\w+) in (?P<p>.+)",
+    lambda m, t: (
+        f"No {m.group('fy')} forecast workbooks from before {m.group('m')} were found "
+        f"in the Previous Forecast Folder ({m.group('p').strip()}). Check the folder, "
+        'and that file names look like "FY27 OPEX Legal_Sep Forecast.xlsx".'
+    ),
+)
+_rule(
+    r"Forecast source folder not found: (?P<p>.+)",
+    lambda m, t: f"The Previous Forecast Folder was not found: {m.group('p').strip()}",
+)
+_rule(
+    r"Forecast file already exists: (?P<f>.+)",
+    lambda m, t: (
+        f"{m.group('f').strip()} is already in the output folder and Existing Files "
+        'is set to "cancel". Choose "skip" to keep it or "replace" to recreate it.'
+    ),
+)
+_rule(
+    r'Forecast Type (?:header|value) not found in "(?P<s>[^"]*)"'
+    r'|Could not find "Forecast Type" header in worksheet "(?P<s2>[^"]*)"',
+    lambda m, t: (
+        f'The sheet "{m.group("s") or m.group("s2")}" has no "Forecast Type" column '
+        "(or no rows under it), so it cannot be updated. Check the workbook layout."
+    ),
+)
+_rule(
+    r'"(?P<s>[^"]*)" does not contain a complete Jul-Jun block',
+    lambda m, t: (
+        f'The sheet "{m.group("s")}" does not have all 12 month columns (Jul-Jun) '
+        "in its header row."
+    ),
+)
+_rule(
+    r'Grand Total column not found in "(?P<s>[^"]*)"',
+    lambda m, t: f'The sheet "{m.group("s")}" has no "Grand Total" column.',
+)
+_rule(
+    r'Excel (?:sheet|worksheet) "(?P<s>[^"]*)" (?:was )?not found',
+    lambda m, t: (
+        f'The forecast workbook has no sheet named "{m.group("s")}". It may have '
+        "been renamed; the forecast mapping expects this name."
+    ),
+)
+_rule(
+    r"Audit sheet|No Tableau fiscal month columns|Duplicate Tableau month",
+    "The data copied from Tableau for this sheet was missing or not in the "
+    "expected layout (one column per month).",
+)
+_rule(
+    r"Tableau parameter \"Forecast Start\" could not be located|Cannot identify "
+    r"Forecast Start parameter",
+    'The Tableau workbook has no "Forecast Start" parameter, so the month cannot be '
+    "set. Check that the right Tableau workbook is selected.",
+)
+_rule(
+    r"(?:Forecast Start|Forecast Type|Company .*?|Company filter) (?:was updated but )?"
+    r"could not be verified|Could not verify worksheet",
+    "The temporary Tableau copy could not be set to the selected month and "
+    "company. Run again; if it repeats, send the log file to support.",
+)
+_rule(
+    r"Individual Tableau TWB not found: (?P<p>.+)",
+    lambda m, t: (
+        "The individual Tableau workbook was not found: "
+        f"{m.group('p').strip()}. Check the Workbooks folder in Settings."
+    ),
+)
+_rule(
+    r'(?:Company filter|Forecast Type filters?|Forecast Type selection|Forecast Measure)'
+    r'.*?(?:tab|on|for) "(?P<tab>[^"]+)"',
+    lambda m, t: (
+        f'The Tableau tab "{m.group("tab").strip()}" is not set up the way the '
+        "validation expects (one Company filter and one Forecast Type filter or "
+        "Forecast Measure parameter). Check the tab's filters."
+    ),
+)
+_rule(
+    r"Forecast workbook not found:\s*(?P<p>.+)",
+    lambda m, t: (
+        f"The forecast workbook {m.group('p').strip().split(chr(92))[-1].split('/')[-1]} "
+        "is not in the Forecast Output Folder. Run steps 1 and 2 for this month first."
+    ),
+)
+_rule(
+    r'Tableau "(?:Crosstab|Worksheet|Window)" menu|Crosstab to Excel',
+    "Tableau did not respond when the table was copied. Make sure Tableau is "
+    "open, shows the report and has no pop-up window, then run again.",
+)
+_rule(
+    r"Windows clipboard",
+    "The app could not read the table copied from Tableau (another program may "
+    "be using the clipboard). Run again.",
+)
+_rule(
+    r"empty crosstab|No data rows were found in the Tableau crosstab"
+    r"|crosstab returned no rows",
+    "Tableau copied an empty table. Make sure the tab shows data for the "
+    "selected month, then run again.",
+)
+_rule(
+    r"safety check failed",
+    "A different Tableau workbook came to the front. Close other Tableau "
+    "workbooks and run again.",
+)
+
 # --- Tableau ---------------------------------------------------------------
 _rule(
     r'Tableau "Copy" menu',
