@@ -63,7 +63,7 @@ def test_finalize_builds_final_layout(tmp_path):
     assert str(ws["E7"].value).startswith("=IF(OR(B7")
     assert str(ws["G7"].value).startswith("=IF(OR(E7")
     assert ws["M4"].value == 1.0
-    assert ws["H8"].value.startswith("Mapped to two lines")
+    assert "Mapped to two lines" in ws["H8"].value  # a live note: blank while PASS
     assert ws["H7"].value is None  # "Reconciled." is dropped
     assert report_status(path) == STATUS_REVIEW
 
@@ -100,3 +100,31 @@ def test_update_individual_values_recomputes_status(tmp_path):
     assert report_status(path) == STATUS_REVIEW  # CBL untouched
     wb = load_workbook(path)
     assert wb["ALIV OPEX"]["C9"].value.startswith("=IF(COUNT(")
+
+
+def test_total_row_allows_rounding_drift(tmp_path):
+    """Lines 95+352+271+144 = 862 while the statement total is 864 (863.56)."""
+    from automations.actuals.report_builder import (
+        CompanySheet, PeriodValues, ReportLine, ReportMeta, apply_total_rules, save_report,
+        STATUS_PASS, STATUS_REVIEW,
+    )
+
+    def line(name, fs, value):
+        return ReportLine(name, PeriodValues(fs, value, value), PeriodValues(fs, value, value))
+
+    lines = [line("Interconnect", 95, 95), line("Reseller Commissions", 352, 352),
+             line("Roaming Service Costs", 271, 271), line("Service Fees", 144, 144),
+             ReportLine("Direct Cost", PeriodValues(864, None, None), PeriodValues(864, None, None))]
+    sheet = CompanySheet("ALIV", "Direct Cost", lines)
+    apply_total_rules(sheet)
+    total = sheet.lines[-1].monthly
+    assert total.consolidated == 862 and total.status == STATUS_PASS
+    # A real gap is still caught: 4 lines allow +/-3, so a 5 difference fails.
+    lines[-1].monthly.fs = 867
+    assert lines[-1].monthly.status == STATUS_REVIEW
+    lines[-1].monthly.fs = 864
+    path = save_report(ReportMeta(area="Direct Cost"), [sheet], tmp_path / "r.xlsx")
+    from openpyxl import load_workbook
+    ws = load_workbook(path)["ALIV Direct Cost"]
+    status_formula = [c.value for c in ws[11] if isinstance(c.value, str) and "COUNT(" in c.value and "PASS" in c.value]
+    assert status_formula, "total row status should use the rounding allowance"

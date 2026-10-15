@@ -112,6 +112,13 @@ class PeriodValues:
     fs: float | None = None
     consolidated: float | None = None
     individual: float | None = None
+    # Total lines add up lines that were each rounded to whole thousands, so
+    # they may drift by up to 0.5 per line. This widens the tolerance for them.
+    allowance: float = 0.0
+
+    @property
+    def tolerance(self) -> float:
+        return TOLERANCE_000 + self.allowance
 
     @property
     def v1(self):
@@ -126,7 +133,7 @@ class PeriodValues:
         v1, v2 = self.v1, self.v2
         if v1 is None or v2 is None:
             return STATUS_PENDING
-        if abs(v1) <= TOLERANCE_000 and abs(v2) <= TOLERANCE_000:
+        if abs(v1) <= self.tolerance and abs(v2) <= self.tolerance:
             return STATUS_PASS
         return STATUS_REVIEW
 
@@ -137,11 +144,11 @@ class PeriodValues:
             parts.append("Financial statement value missing")
         if self.consolidated is None:
             parts.append("Consolidated Tableau value missing")
-        elif v1 is not None and abs(v1) > TOLERANCE_000:
+        elif v1 is not None and abs(v1) > self.tolerance:
             parts.append(f"Consolidated differs from FS by {v1:,.1f}")
         if self.individual is None:
             parts.append("Individual Tableau not captured")
-        elif v2 is not None and abs(v2) > TOLERANCE_000:
+        elif v2 is not None and abs(v2) > self.tolerance:
             parts.append(f"Individual differs from consolidated by {v2:,.1f}")
         return "; ".join(parts)
 
@@ -255,6 +262,13 @@ def apply_total_rules(sheet: CompanySheet) -> None:
                     attr,
                     float(sum(numbers)) if numbers else None,
                 )
+        for period in ("monthly", "ytd"):
+            counted = sum(
+                1
+                for i in range(first, last + 1)
+                if is_number(getattr(sheet.lines[i], period).consolidated)
+            )
+            getattr(total, period).allowance = 0.5 * counted
 
 
 # --- Reading existing workbooks -------------------------------------------
@@ -434,7 +448,16 @@ def _row_height(ws, row) -> float:
     return max(20, 13 * lines + 7)
 
 
-def _add_conditional_formats(ws, line_count: int) -> None:
+def _row_tolerance(components, start: int) -> str:
+    """Excel text for a row's tolerance: M4, plus 0.5 per summed line on total rows."""
+    if not components:
+        return TOLERANCE_CELL
+    letter = get_column_letter(start + 1)
+    rng = f"{letter}{FIRST_DATA_ROW + components[0]}:{letter}{FIRST_DATA_ROW + components[1]}"
+    return f"({TOLERANCE_CELL}+0.5*COUNT({rng}))"
+
+
+def _add_conditional_formats(ws, line_count: int, components_by_row=None) -> None:
     """Colour variances and statuses from their live values, so the colours
     follow the formulas when someone edits a number."""
     if not line_count:
@@ -442,21 +465,21 @@ def _add_conditional_formats(ws, line_count: int) -> None:
     last_row = FIRST_DATA_ROW + line_count - 1
     flag_fill = _fill(VARIANCE_FLAG_FILL)
     flag_font = Font(name=FONT_NAME, bold=True, color="9C0006")
+    components_by_row = components_by_row or {}
     for start in (MONTHLY_COL, YTD_COL):
         for offset in (3, 4):
             letter = get_column_letter(start + offset)
-            rng = f"{letter}{FIRST_DATA_ROW}:{letter}{last_row}"
-            ws.conditional_formatting.add(
-                rng,
-                FormulaRule(
-                    formula=[
-                        f"AND(ISNUMBER({letter}{FIRST_DATA_ROW}),"
-                        f"ABS({letter}{FIRST_DATA_ROW})>{TOLERANCE_CELL})"
-                    ],
-                    fill=flag_fill,
-                    font=flag_font,
-                ),
-            )
+            for index in range(line_count):
+                row = FIRST_DATA_ROW + index
+                tol = _row_tolerance(components_by_row.get(index), start)
+                ws.conditional_formatting.add(
+                    f"{letter}{row}",
+                    FormulaRule(
+                        formula=[f"AND(ISNUMBER({letter}{row}),ABS({letter}{row})>{tol})"],
+                        fill=flag_fill,
+                        font=flag_font,
+                    ),
+                )
         letter = get_column_letter(start + 5)
         targets = [f"{letter}{FIRST_DATA_ROW}:{letter}{last_row}"]
         if start == MONTHLY_COL:
@@ -516,7 +539,7 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
         "All amounts in $000.  V1 = Consolidated Tableau − Financial Statement.  "
         "V2 = Individual Tableau − Consolidated Tableau.  "
         "V1, V2, Status and total lines are live Excel formulas.  "
-        "PASS when both variances are within the tolerance in M4.  "
+        "PASS when both variances are within the tolerance in M4 (totals also allow 0.5 per line for rounding).  "
         "Shaded variances are outside tolerance.",
     )
     legend.font = _font(size=9, italic=True, color="6B7785")
@@ -603,9 +626,10 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
                 if band:
                     cell.fill = band
             status = ws.cell(row, start + 5)
+            tol = _row_tolerance(components, start)
             status.value = (
                 f'=IF(OR({v1_c}{row}="",{v2_c}{row}=""),"{STATUS_PENDING}",'
-                f'IF(AND(ABS({v1_c}{row})<={TOLERANCE_CELL},ABS({v2_c}{row})<={TOLERANCE_CELL}),'
+                f'IF(AND(ABS({v1_c}{row})<={tol},ABS({v2_c}{row})<={tol}),'
                 f'"{STATUS_PASS}","{STATUS_REVIEW}"))'
             )
             status.font = _font(bold=True, size=10)
@@ -634,7 +658,7 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
             )
         row += 1
 
-    _add_conditional_formats(ws, len(sheet.lines))
+    _add_conditional_formats(ws, len(sheet.lines), total_components(sheet.lines))
 
     for col in range(1, LAST_COL + 1):
         ws.cell(HEADER_ROW, col).border = Border(left=MEDIUM if col == YTD_COL else None)

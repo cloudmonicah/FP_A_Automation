@@ -30,7 +30,7 @@ def test_tab_without_company_column_uses_grand_total():
 def test_two_workbooks_are_added_and_status_recomputed():
     def pair(month, ytd, fs_m, fs_y, cons_m, cons_y):
         mk = lambda basis, amount, fs, cons: [
-            basis, fs, cons, amount, round(amount / 1000), None, None,
+            basis, fs, cons, amount, None if amount is None else round(amount / 1000), None, None,
             "ACTION REQUIRED", "wb", "tab", "sheet", "2026-09-01", "ft", "",
         ]
         return [mk("MONTH", month, fs_m, cons_m), mk("YTD", ytd, fs_y, cons_y)]
