@@ -212,6 +212,20 @@ def total_components(lines: list[ReportLine]) -> dict[int, tuple[int, int]]:
     return result
 
 
+def apply_zero_rule(sheet: CompanySheet) -> None:
+    """A line the statement reports as 0 shows 0 (not a blank) in the Tableau
+    columns too: Tableau lists no rows for a category with no postings."""
+    for line in sheet.lines:
+        if line.is_total:
+            continue
+        for period in (line.monthly, line.ytd):
+            if period.fs == 0:
+                if period.consolidated is None:
+                    period.consolidated = 0.0
+                if period.individual is None:
+                    period.individual = 0.0
+
+
 def apply_total_rules(sheet: CompanySheet) -> None:
     """Total lines show the sum of the lines above in the Consolidated and
     Individual columns (the Financial Statement column is never changed).
@@ -780,6 +794,8 @@ def save_report(meta: ReportMeta, sheets: list[CompanySheet], path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     staged = path.with_name(path.stem + ".__tmp__.xlsx")
+    for sheet in sheets:
+        apply_zero_rule(sheet)
     workbook = build_report_workbook(meta, sheets)
     try:
         workbook.save(staged)

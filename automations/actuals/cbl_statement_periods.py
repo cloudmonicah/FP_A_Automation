@@ -193,6 +193,35 @@ def read_cbl_area(workbook_path, area, closed_period=None):
                 raise ValueError("Expected one CBL reported Total COGS.")
             monthly["Cost of Goods Sold"] = amount(totals[0][3], "monthly Total COGS")
             ytd["Cost of Goods Sold"] = amount(totals[0][15], "YTD Total COGS")
+        if area in ("Revenue", "Direct Cost"):
+            # The Financials tab hides lines that are zero. The Statement of
+            # Earnings still lists them, so a line that is 0 there reads as 0.
+            from automations.actuals import mapping as _mapping
+
+            wanted = {
+                "Revenue": _mapping.REVENUE_MAPPINGS,
+                "Direct Cost": _mapping.DIRECT_COST_MAPPINGS,
+            }[area]
+            have = {canonical(k) for k in ytd}
+            for entry in wanted:
+                if entry.get("company") != "CBL":
+                    continue
+                name = entry["fs_line"]
+                if canonical(name) in have:
+                    continue
+                for r in earnings.iter_rows(values_only=True):
+                    if canonical(r[1]) == canonical(name):
+                        month_v = r[3] if len(r) > 3 else None
+                        ytd_v = r[15] if len(r) > 15 else None
+                        if (
+                            isinstance(month_v, (int, float))
+                            and isinstance(ytd_v, (int, float))
+                            and month_v == 0
+                            and ytd_v == 0
+                        ):
+                            ytd[name] = 0.0
+                            monthly[name] = 0.0
+                        break
         if not ytd:
             raise ValueError(f"No CBL {area} statement values found.")
         if area == "OPEX":
