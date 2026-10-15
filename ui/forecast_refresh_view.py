@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox
 import ttkbootstrap as tb
 
 from automations.forecast.mapping import FORECAST_CATEGORIES, routes_for
+from automations.forecast.preflight import check_before_update, check_before_validation
 from automations.forecast.service import (
     build_forecast_period,
     fiscal_year_for,
@@ -693,6 +694,60 @@ class ForecastRefreshView(tb.Frame):
     # STEP 2 - CONSOLIDATED TABLEAU -> EXCEL
     # =========================================================
 
+    # ---------------------------------------------------------
+    # Quick file check before Tableau (steps 2 and 3)
+    # ---------------------------------------------------------
+
+    def _start_check(self, kind: str, inputs: dict) -> None:
+        self.status_var.set("Checking files")
+        self.status_description_var.set("Checking the forecast and Tableau files before opening Tableau...")
+        self._start_worker(self._run_check, {**inputs, "kind": kind})
+
+    def _run_check(self, inputs: dict) -> None:
+        try:
+            routes = routes_for(inputs["categories"])
+            if inputs["kind"] == "update":
+                problems = check_before_update(
+                    routes, inputs["output_folder"], inputs["tableau_workbook"], inputs["period"]
+                )
+            else:
+                problems = check_before_validation(routes, inputs["output_folder"], inputs["period"])
+        except Exception as exc:
+            log.exception("Forecast file check failed")
+            problems = [{"workbook": "", "worksheet": "", "problem": f"The file check could not finish ({friendly(exc)}). "
+                                                                      "The run can still continue."}]
+        self._post(self._check_done, inputs, problems)
+
+    def _check_done(self, inputs: dict, problems: list[dict]) -> None:
+        self._set_busy(False)
+        if problems:
+            shown = [
+                f"• {p['workbook'].replace('_Aug Forecast', '')} / {p['worksheet']}: {p['problem']}"
+                if p.get("workbook") else f"• {p['problem']}"
+                for p in problems[:12]
+            ]
+            if len(problems) > 12:
+                shown.append(f"…and {len(problems) - 12} more.")
+            step = "updated" if inputs["kind"] == "update" else "validated"
+            if not messagebox.askyesno(
+                "Check before Tableau",
+                f"{len(problems)} problem(s) found before opening Tableau:\n\n"
+                + "\n".join(shown)
+                + f"\n\nContinue anyway? These sheets will not be {step}; the others will.",
+                icon="warning",
+                parent=self.winfo_toplevel(),
+            ):
+                self.status_var.set("Stopped before Tableau")
+                self.status_description_var.set("Fix the problems listed, then run again.")
+                return
+        if not confirm_close_tableau(self):
+            self._show_ready_message(inputs["period"])
+            return
+        if inputs["kind"] == "update":
+            self._begin_population(inputs)
+        else:
+            self._begin_validation(inputs)
+
     @staticmethod
     def _describe(categories) -> str:
         return "all categories" if not categories else ", ".join(categories)
@@ -718,9 +773,10 @@ class ForecastRefreshView(tb.Frame):
             parent=self.winfo_toplevel(),
         ):
             return
-        if not confirm_close_tableau(self):
-            return
+        self._start_check("update", inputs)
 
+    def _begin_population(self, inputs: dict) -> None:
+        categories = inputs["categories"]
         self.status_var.set(f"Updating {self._describe(categories)}")
         self.status_description_var.set("Opening the consolidated Tableau workbook...")
         for name in categories or (*FORECAST_CATEGORIES, "All"):
@@ -806,9 +862,10 @@ class ForecastRefreshView(tb.Frame):
             parent=self.winfo_toplevel(),
         ):
             return
-        if not confirm_close_tableau(self):
-            return
+        self._start_check("validate", inputs)
 
+    def _begin_validation(self, inputs: dict) -> None:
+        categories = inputs["categories"]
         self.status_var.set(f"Validating {self._describe(categories)}")
         for name in categories or (*FORECAST_CATEGORIES, "All"):
             self._category_vars[name][1].set("Running…")
