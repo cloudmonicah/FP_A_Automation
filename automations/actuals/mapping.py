@@ -417,7 +417,7 @@ INDIVIDUAL_DIRECT_COST_MAPPINGS = [
         "company": "CBL",
         "fs_line": "Programming fees - Media",
         "add_to": "Programming fees",
-        "individual_tableau_workbook": workbook_path("OPEX", "Media.twb"),
+        "individual_tableau_workbook": rf"{_DC_FOLDER}\CBL Content Fees_Media.twb",
         "individual_tableau_worksheet": "CBL MEDIA Programming Fees - Monthly Actual v Budget",
         "tableau_categories": [],
         "aggregation": AGG_DIRECT,
