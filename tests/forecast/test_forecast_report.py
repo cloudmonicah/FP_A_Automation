@@ -26,12 +26,22 @@ def _write(folder):
     )
 
 
+def _columns(ws):
+    return {cell.value: index for index, cell in enumerate(ws[1]) if cell.value}
+
+
 def _summary(path):
+    """Label -> value from the summary (details and KPI tiles), and detail statuses."""
     wb = load_workbook(path)
     try:
         ws = wb["Validation Summary"]
         values = {ws.cell(r, 1).value: ws.cell(r, 2).value for r in range(1, ws.max_row + 1)}
-        details = [row[8] for row in wb["Validation Detail"].iter_rows(min_row=2, values_only=True)]
+        for col in range(1, ws.max_column + 1):  # tiles: number above label
+            if ws.cell(7, col).value:
+                values[ws.cell(7, col).value] = ws.cell(6, col).value
+        detail = wb["Validation Detail"]
+        status = _columns(detail)["Status"]
+        details = [row[status] for row in detail.iter_rows(min_row=2, values_only=True)]
         return values, details
     finally:
         wb.close()
@@ -41,7 +51,8 @@ def test_every_route_and_status_is_reported(tmp_path):
     path = _write(tmp_path)
     assert path.name == "Forecast_Validation_Oct_2026.xlsx"
     values, details = _summary(path)
-    assert details == ["PASS", "NOT VALIDATED", "ACTION REQUIRED"]
+    assert sorted(details) == ["ACTION REQUIRED", "NOT VALIDATED", "PASS"]
+    assert details[0] == "ACTION REQUIRED"  # problems are listed first
     assert values["Not Validated"] == 1
     assert values["Action Required"] == 1
     assert values["Overall Status"] == "REVIEW REQUIRED"
@@ -81,10 +92,13 @@ def _run(folder, category, statuses, forecast_type="FY27 Forecast_102026", **fla
     )
 
 
-def _detail(path):
+def _detail(path, sheet="Validation Detail"):
     wb = load_workbook(path)
     try:
-        return [(row[0], row[8]) for row in wb["Validation Detail"].iter_rows(min_row=2, values_only=True)]
+        ws = wb[sheet]
+        cols = _columns(ws)
+        return [(row[cols["Category"]], row[cols["Status"]])
+                for row in ws.iter_rows(min_row=2, values_only=True) if row[cols["Status"]]]
     finally:
         wb.close()
 
@@ -110,6 +124,26 @@ def test_routes_not_set_up_do_not_block_reconciled(tmp_path):
         _run(tmp_path, category, ["PASS"])
     path = _run(tmp_path, "Below the Line", ["NOT VALIDATED"], not_configured=True)
     values, _ = _summary(path)
-    assert values["Not Set Up for Validation"] == 1
+    assert values["Not Set Up"] == 1
     assert values["Not Validated"] == 0
     assert values["Overall Status"] == "RECONCILED"
+
+
+def test_needs_review_sheet_lists_only_problems(tmp_path):
+    _run(tmp_path, "OPEX", ["PASS", "FAIL"])
+    path = _run(tmp_path, "Revenue", ["NOT VALIDATED", "NOT VALIDATED"], not_configured=True)
+    assert _detail(path, "Needs Review") == [("OPEX", "FAIL")]
+    assert _detail(path) == [("OPEX", "FAIL"), ("OPEX", "PASS"), ("Revenue", "NOT SET UP"), ("Revenue", "NOT SET UP")]
+
+
+def test_report_uses_one_font_throughout(tmp_path):
+    from shared.excel_style import FONT_NAME
+
+    path = _run(tmp_path, "OPEX", ["PASS", "FAIL"])
+    wb = load_workbook(path)
+    try:
+        fonts = {cell.font.name for ws in wb.worksheets for row in ws.iter_rows() for cell in row
+                 if cell.value is not None}
+    finally:
+        wb.close()
+    assert fonts == {FONT_NAME}
