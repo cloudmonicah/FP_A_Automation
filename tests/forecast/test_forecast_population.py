@@ -82,7 +82,7 @@ def test_population_uses_a_temp_copy_and_continues_past_bad_routes(setup):
 
     assert [p["worksheet"] for p in result["passed"]] == ["ALIV"]
     errors = {f["workbook"] + "/" + f["worksheet"]: f["error"] for f in result["failed"]}
-    assert errors["FY27 OPEX Legal_Oct Forecast.xlsx/CBL"]
+    assert 'no sheet named "CBL"' in errors["FY27 OPEX Legal_Oct Forecast.xlsx/CBL"]
     hr = errors["FY27 OPEX HR_Oct Forecast.xlsx/ALIV"]
     assert "September 2026" in hr and "October 2026" in hr
 
