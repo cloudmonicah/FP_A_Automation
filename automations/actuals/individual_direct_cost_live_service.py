@@ -3,6 +3,7 @@
 Raw captures are NOT reconciled amounts. Existing financial validation stays unchanged.
 """
 from __future__ import annotations
+from shared.friendly_errors import explain
 import csv
 import re
 import time
@@ -15,6 +16,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from automations.actuals.mapping import INDIVIDUAL_DIRECT_COST_MAPPINGS
+from shared.friendly_errors import friendly
 
 
 def _next_month(d):
@@ -96,7 +98,7 @@ def run_individual_direct_cost_live(*, output_paths, closed_period, tableau_sett
     combined = Workbook()
     index_sheet = combined.active
     index_sheet.title = 'Capture Index'
-    index_sheet.append(['Sheet', 'Company', 'Source TWB', 'Worksheet', 'Rows', 'Raw XLSX'])
+    index_sheet.append(['Sheet', 'Company', 'Source TWB', 'Worksheet', 'Rows', 'Raw XLSX', 'Result'])
     completed = 0
     routes = list(INDIVIDUAL_DIRECT_COST_MAPPINGS)
     for index, route in enumerate(routes, 1):
@@ -128,7 +130,7 @@ def run_individual_direct_cost_live(*, output_paths, closed_period, tableau_sett
             note = f'Forecast Start edits: {edits}; raw crosstab only, financial reconciliation NOT VERIFIED'
             completed += 1
         except Exception as exc:
-            note = f'{type(exc).__name__}: {exc}'
+            note = explain(exc)
             print(f'[DIRECT COST] ERROR: {note}', flush=True)
         finally:
             if opened:
@@ -141,7 +143,8 @@ def run_individual_direct_cost_live(*, output_paths, closed_period, tableau_sett
                     temp.unlink()
                 except OSError:
                     note += '; temporary workbook cleanup required'
-            index_sheet.append([name, company, str(source), worksheet, count, raw_path])
+            index_sheet.append([name, company, str(source), worksheet, count, raw_path,
+                                '' if status == 'CAPTURED' else friendly(note)])
             # Save the combined workbook once, after all captures.
     combined.save(folder / 'Individual_Direct_Cost_Crosstabs.xlsx')
     combined.close()

@@ -5,6 +5,8 @@ from datetime import date, datetime
 from pathlib import Path
 import re
 
+from shared.friendly_errors import PlainLanguageError, explain
+
 from openpyxl import load_workbook
 
 # ============================================================
@@ -73,7 +75,7 @@ def _number(value):
 #                   missing file). The run carries on with the next route.
 
 
-class SuspectForecastData(ValueError):
+class SuspectForecastData(PlainLanguageError, ValueError):
     """A forecast line that must not be compared. The route is NOT VALIDATED."""
 
 
@@ -1046,7 +1048,7 @@ def run_grouped_individual_validation(
                     route,
                     target_month_abbr,
                     "ACTION REQUIRED",
-                    f"{type(exc).__name__}: {exc}",
+                    explain(exc),
                 )
             )
             continue
@@ -1110,7 +1112,7 @@ def run_grouped_individual_validation(
             workbook_record["status"] = result["status"]
 
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
+            error = explain(exc)
             workbook_record["status"] = "ACTION REQUIRED"
             workbook_record["error"] = error
             results.append(
@@ -1140,11 +1142,13 @@ def run_grouped_individual_validation(
                 try:
                     temporary.unlink(missing_ok=True)
                 except Exception as exc:
+                    explain(exc)  # technical detail to the log only
                     workbook_record["error"] = " | ".join(
                         part
                         for part in (
                             workbook_record["error"],
-                            f"Temporary TWB cleanup warning: {type(exc).__name__}: {exc}",
+                            "A temporary Tableau copy could not be removed; "
+                            "it is deleted automatically later.",
                         )
                         if part
                     )

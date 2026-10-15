@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain
 
 from pathlib import Path
 import shutil
@@ -216,7 +217,7 @@ def create_initial_forecasts(
                 {
                     "file": source_file.name,
                     "path": str(source_file),
-                    "error": (f"{type(exc).__name__}: {exc}"),
+                    "error": (explain(exc)),
                 }
             )
 

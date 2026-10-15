@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain
 
 from pathlib import Path
 import time
@@ -438,10 +439,10 @@ def close_tableau_forecast_workbook(
         # ====================================================
 
         warning = (
-            "Forecast processing completed, but Tableau cleanup "
-            "encountered an error: "
-            f"{type(exc).__name__}: {exc}"
+            "Processing completed, but Tableau could not be closed "
+            "automatically. Please close it yourself. "
         )
+        explain(exc)
 
         result["warning"] = warning
 
@@ -526,6 +527,6 @@ def close_all_tableau_workbooks(wait_seconds: float = 15.0) -> dict:
         else:
             print("All Tableau workbooks closed.")
     except Exception as exc:
-        result["warning"] = f"Could not close open Tableau workbooks: {type(exc).__name__}: {exc}"
+        result["warning"] = "Tableau could not be closed automatically. Please close it yourself."
         print("[WARNING] " + result["warning"])
     return result

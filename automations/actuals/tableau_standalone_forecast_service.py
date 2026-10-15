@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain
 
 from collections import defaultdict
 from copy import copy
@@ -2169,7 +2170,7 @@ def write_forecast_excel_totals_validation(
                     total = _forecast_total_cell_value(worksheet, address)
                     record["excel_total"] = float(total)
                 except Exception as exc:
-                    record["note"] = f"{type(exc).__name__}: {exc}"
+                    record["note"] = explain(exc)
                 records.append(record)
         except Exception as exc:
             for configured_sheet, tableau_tabs in sheet_routes.items():
@@ -2180,7 +2181,7 @@ def write_forecast_excel_totals_validation(
                         "excel_total": None,
                         "total_cell": "",
                         "tableau_route": "; ".join(dict.fromkeys(tableau_tabs)),
-                        "note": f"{type(exc).__name__}: {exc}",
+                        "note": explain(exc),
                     }
                 )
         finally:
@@ -2690,7 +2691,7 @@ def populate_individual_forecast_totals(
                 sheet.cell(row_number, 4).value = None
                 sheet.cell(row_number, 5).value = None
                 sheet.cell(row_number, 6, "ACTION REQUIRED")
-                sheet.cell(row_number, 9, f"{type(exc).__name__}: {exc}")
+                sheet.cell(row_number, 9, explain(exc))
                 counts["action_required"] += 1
             finally:
                 close_ok = not opened
@@ -3222,12 +3223,12 @@ def run_standalone_forecast_folder(
             print()
             print(f"[FAILED] " f"{source_path.name}")
 
-            print(f"{type(exc).__name__}: " f"{exc}")
+            printexplain(exc)
 
             failed.append(
                 {
                     "workbook": (source_path.name),
-                    "error": (f"{type(exc).__name__}: " f"{exc}"),
+                    "error": explain(exc),
                 }
             )
 
@@ -3285,7 +3286,7 @@ def run_standalone_forecast_folder(
     except Exception as exc:
         # Keep workbook-update success separate from a failed report export.
         result["forecast_validation"] = {
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": explain(exc),
             "tableau_status": "NOT RUN",
         }
         print("[VALIDATION REPORT ERROR] " + result["forecast_validation"]["error"])

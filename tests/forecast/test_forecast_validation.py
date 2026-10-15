@@ -169,7 +169,7 @@ def test_one_failing_route_does_not_stop_the_run(tmp_path, twb, monkeypatch):
     result, opened, closed, progress = _run(tmp_path, twb, monkeypatch, capture)
     statuses = [r["status"] for r in result["results"]]
     assert statuses == ["ACTION REQUIRED", "PASS", "NOT VALIDATED"]
-    assert "not ready yet" in result["results"][0]["note"]
+    assert "Tableau did not open in time" in result["results"][0]["note"]
     assert len(opened) == len(closed) == 2
     assert not list(tmp_path.glob("tmp_*.twb"))  # temp copies cleaned up
     assert progress[-1] == (3, 3)

@@ -59,6 +59,35 @@ def _find_header(rows, closed_period):
             ytd[0] if len(ytd) == 1 else None)
 
 
+def _extract_dedicated_total(rows, header, cat_col, company_col, month_col, ytd_col, company):
+    """A worksheet that already holds this line's total: read its total row.
+
+    Prefers the company's own total row, then the Grand Total row, then a lone
+    data row. Anything else is reported instead of guessed.
+    """
+    data = [r for r in rows[header + 1:] if any(v is not None and str(v).strip() for v in r)]
+    width = max(cat_col or 0, company_col or 0) + 1
+    def labels(row):
+        return [_key(x) for x in row[:max(width, 1)]]
+    def is_total(row):
+        return any(x in ('GRANDTOTAL', 'TOTAL', 'SUBTOTAL') for x in labels(row))
+    own = [r for r in data if is_total(r) and company_col is not None and company_col < len(r)
+           and _key(r[company_col]) == company]
+    grand = [r for r in data if any(x == 'GRANDTOTAL' for x in labels(r))]
+    pick = own[0] if len(own) == 1 else grand[0] if len(grand) == 1 else data[0] if len(data) == 1 else None
+    if pick is None:
+        return None, None, 'The Reseller Commissions total row could not be identified in the Tableau table'
+    def value(column):
+        if column is None or column >= len(pick):
+            return None
+        return _number(pick[column])
+    monthly, ytd = value(month_col), value(ytd_col)
+    note = (f'Read the worksheet total row; Monthly: {monthly if monthly is not None else "unavailable"}; '
+            f'YTD: {ytd if ytd is not None else "unavailable"}')
+    return (_thousands(monthly) if monthly is not None else None,
+            _thousands(ytd) if ytd is not None else None, note)
+
+
 def _extract(ws, route, closed_period):
     rows = list(ws.values)
     found = _find_header(rows, closed_period)
@@ -74,8 +103,8 @@ def _extract(ws, route, closed_period):
     categories = {_key(x) for x in route.get('tableau_categories', []) if x}
     # Correct the legacy ALIV reseller labels to the actual GL Account Mapping
     # values observed in both the consolidated and individual Tableau exports.
-    if company == 'ALIV' and line == 'RESELLERCOMMISSIONS':
-        categories = {'PUSHTOTALKCOMMISSION', 'TOPUPANDPLANCOMMISSION'}
+    if route.get('dedicated_total'):
+        return _extract_dedicated_total(rows, header, cat_col, company_col, month_col, ytd_col, company)
     # Control total: sum distinct detail rows in the single ALIV source capture;
     # never add it on top of the component mapping values.
     if aggregation == 'TOTAL' and company == 'ALIV' and line == 'DIRECTCOST':
@@ -88,7 +117,7 @@ def _extract(ws, route, closed_period):
     # with no category or company dimension. Permit only a known dedicated
     # workbook, exactly one numeric detail row and the mapped CBL category.
     dimensionless = cat_col is None
-    if dimensionless and not (company == 'CBL' and line == 'PROGRAMMINGFEES'):
+    if dimensionless and not (company == 'CBL' and line.startswith('PROGRAMMINGFEES')):
         return None, None, 'No category column; cannot safely filter this worksheet'
 
     matched = []
@@ -127,6 +156,34 @@ def _extract(ws, route, closed_period):
             _thousands(ytd) if ytd is not None else None, note)
 
 
+def _extract_company_total(ws, route, closed_period):
+    """Read a Monthly / YTD total for a component capture.
+
+    The content-fees views are read like the Programming fees view. If that does
+    not fit the table, the month-columns company total reading is used instead.
+    """
+    first = _extract(ws, route, closed_period)
+    if first[0] is not None and first[1] is not None:
+        return first
+    import csv
+    import tempfile
+    from automations.actuals.individual_opex_crosstab_parser import extract_monthly_ytd
+    rows = [['' if v is None else str(v) for v in row] for row in ws.values]
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, newline='', encoding='utf-8') as fh:
+            path = fh.name
+            csv.writer(fh, delimiter='\t').writerows(rows)
+        actuals = extract_monthly_ytd(path, route['company'], closed_period, route.get('fiscal_start_month', 7))
+    except Exception as exc:
+        return None, None, f'The Media table could not be read: {exc}'
+    finally:
+        if path:
+            Path(path).unlink(missing_ok=True)
+    month, ytd = Decimal(str(actuals['MONTH'])), Decimal(str(actuals['YTD']))
+    return _thousands(month), _thousands(ytd), f'Added {route["fs_line"]}: Monthly {month:,.0f}; YTD {ytd:,.0f} (dollars)'
+
+
 def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
     """Write captured individual values into the final report and rebuild it.
 
@@ -137,18 +194,50 @@ def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
     updates = {company: {} for company in ("ALIV", "CBL")}
     results = []
     raw = load_workbook(crosstab_path, read_only=True, data_only=True)
+    reasons = {}
     try:
+        if 'Capture Index' in raw.sheetnames:
+            for row in raw['Capture Index'].iter_rows(min_row=2, values_only=True):
+                if row and row[0] and len(row) > 6 and row[6]:
+                    reasons[str(row[0])] = str(row[6])
+    except Exception:
+        reasons = {}
+    try:
+        components = []
         for index, route in enumerate(INDIVIDUAL_DIRECT_COST_MAPPINGS, 1):
             company, line = route['company'], route['fs_line']
             name = re.sub(r'[\\/*?:\[\]]', '_', f'{index:03d}_{company}_{line}')[:31]
+            if route.get('add_to'):
+                components.append((route, name))
+                continue
             monthly = ytd = None
             if name in raw.sheetnames:
                 monthly, ytd, note = _extract(raw[name], route, closed_period)
             else:
-                note = 'Capture worksheet missing (failed or skipped Tableau capture)'
+                note = reasons.get(name) or 'Capture worksheet missing (failed or skipped Tableau capture)'
             reason = None if monthly is not None and ytd is not None else f'Individual capture: {note}'
             updates[company][line] = (monthly, ytd, reason)
             results.append([company, line, 'YTD CAPTURED' if ytd is not None else 'REVIEW REQUIRED', note])
+        for route, name in components:
+            company, target = route['company'], route['add_to']
+            if name in raw.sheetnames:
+                extra_m, extra_y, extra_note = _extract_company_total(raw[name], route, closed_period)
+            else:
+                extra_m = extra_y = None
+                extra_note = reasons.get(name) or 'Capture worksheet missing (failed or skipped Tableau capture)'
+            monthly, ytd, reason = updates[company].get(target, (None, None, None))
+            if extra_m is None or extra_y is None:
+                reason = f'{route["fs_line"]}: {extra_note}'
+                monthly = ytd = None
+                status = 'REVIEW REQUIRED'
+            else:
+                if monthly is not None:
+                    monthly += extra_m
+                if ytd is not None:
+                    ytd += extra_y
+                status = f'ADDED TO {target.upper()}'
+            updates[company][target] = (monthly, ytd, reason)
+            results.append([company, route['fs_line'], status, extra_note])
     finally:
         raw.close()
 

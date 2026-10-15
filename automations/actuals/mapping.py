@@ -1,10 +1,3 @@
-"""
-Actuals validation mapping configuration.
-
-Single source of truth for individual OPEX Tableau routes.
-Direct Cost and Revenue can be migrated here later.
-"""
-
 from shared.settings import workbook_path
 
 AGG_DIRECT = "DIRECT"
@@ -26,6 +19,17 @@ OPEX_MAPPINGS = [
             "OPEX", "ALIV Gen & Admin_Finance.twb"
         ),
         "individual_tableau_worksheet": "Monthly Actual v Budget by Sub account",
+        # G&A is the SUM of two individual workbooks.
+        "individual_sources": [
+            {
+                "workbook": workbook_path("OPEX", "ALIV Gen & Admin_Finance.twb"),
+                "worksheet": "Monthly Actual v Budget by Sub account",
+            },
+            {
+                "workbook": workbook_path("OPEX", "ALIV Head Office.twb"),
+                "worksheet": "Monthly Sub Account Actual v Budget",
+            },
+        ],
         "individual_actuals_enabled": True,
     },
     {
@@ -156,15 +160,6 @@ OPEX_MAPPINGS = [
         "individual_tableau_worksheet": "ALIV Monthly Subaccount Actual v Budget",
         "individual_actuals_enabled": True,
     },
-    # {
-    #     "company": "ALIV",
-    #     "fs_line": "Service Delivery",
-    #     "tableau_category": "SERVICE DELIVERY",
-    #     "aggregation": AGG_DIRECT,
-    #     "individual_tableau_workbook": workbook_path("OPEX", "Service Delivery.twb"),
-    #     "individual_tableau_worksheet": "Monthly_Actual v Budget",
-    #     "individual_actuals_enabled": True,
-    # },
     {
         "company": "ALIV",
         "fs_line": "Operating Expenses",
@@ -183,6 +178,17 @@ OPEX_MAPPINGS = [
             "OPEX", "CBL Gen & Admin_Finance.twb"
         ),
         "individual_tableau_worksheet": "Monthly YTD Actual v Budget by Sub account",
+        # G&A is the SUM of two individual workbooks.
+        "individual_sources": [
+            {
+                "workbook": workbook_path("OPEX", "CBL Gen & Admin_Finance.twb"),
+                "worksheet": "Monthly YTD Actual v Budget by Sub account",
+            },
+            {
+                "workbook": workbook_path("OPEX", "CBL Head Office.twb"),
+                "worksheet": "Monthly Sub Account Actual v Budget",
+            },
+        ],
         "individual_actuals_enabled": True,
     },
     {
@@ -229,7 +235,7 @@ OPEX_MAPPINGS = [
         "individual_tableau_workbook": workbook_path(
             "OPEX", "Information Technology.twb"
         ),
-        "individual_tableau_worksheet": "CBL Monthly Subaccount Actual v Budget",
+        "individual_tableau_worksheet": "CBL Monthly Subaccount Actual v Budget (Excl Media)",
         "individual_actuals_enabled": True,
     },
     {
@@ -328,12 +334,12 @@ OPEX_MAPPINGS = [
         "individual_tableau_worksheet": "Monthly Subaccount Actual v Budget",
         "individual_actuals_enabled": True,
     },
-    # {
-    #     "company": "CBL",
-    #     "fs_line": "Total Opex",
-    #     "tableau_category": "CBL Total",
-    #     "aggregation": AGG_TOTAL,
-    # },
+    {
+        "company": "CBL",
+        "fs_line": "Total Opex",
+        "tableau_category": "CBL Total",
+        "aggregation": AGG_TOTAL,
+    },
 ]
 
 
@@ -358,16 +364,13 @@ INDIVIDUAL_DIRECT_COST_MAPPINGS = [
     {
         "company": "ALIV",
         "fs_line": "Reseller Commissions",
-        "individual_tableau_workbook": rf"{_DC_FOLDER}\Cable Bahamas Group Direct Costs_Engineering.twb",
-        "individual_tableau_worksheet": "ALIV Group Direct Costs Details",
-        "tableau_categories": [
-            "COMMISSIONS - PUSH TO TALK",
-            "COMMISSIONS - RECAHRAGE DEALERS",
-            "COMMISSIONS - KIOSKS",
-            "COMISSIONS - BTS RECHARGE",
-            "COMMISSIONS - OTHER SERVICE COMMISSIONS & BANK CHA",
-        ],
-        "aggregation": AGG_SUM,
+        "individual_tableau_workbook": rf"{_DC_FOLDER}\Cable Bahamas Group Direct Costs_Consumer Sales.twb",
+        "individual_tableau_worksheet": "ALIV Reseller Group Direct Costs Details",
+        # This worksheet already holds the Reseller Commissions total, so the
+        # total row is read instead of adding up commission categories.
+        "tableau_categories": [],
+        "aggregation": AGG_TOTAL,
+        "dedicated_total": True,
         "individual_actuals_enabled": True,
     },
     {
@@ -406,6 +409,18 @@ INDIVIDUAL_DIRECT_COST_MAPPINGS = [
         "individual_tableau_worksheet": "CBL Programming Fees - Monthly Budget v Actual",
         "tableau_categories": ["CONTENT FEES"],
         "aggregation": AGG_SUM,
+        "individual_actuals_enabled": True,
+    },
+    {
+        # Media's costs belong in Programming fees, so this capture is added to
+        # that line instead of being reported as a line of its own.
+        "company": "CBL",
+        "fs_line": "Programming fees - Media",
+        "add_to": "Programming fees",
+        "individual_tableau_workbook": rf"{_DC_FOLDER}\CBL Content Fees_Media.twb",
+        "individual_tableau_worksheet": "CBL MEDIA Programming Fees - Monthly Actual v Budget",
+        "tableau_categories": [],
+        "aggregation": AGG_DIRECT,
         "individual_actuals_enabled": True,
     },
     {
@@ -576,6 +591,8 @@ REVENUE_CORPORATE_WORKBOOK = (
     rf"{_REVENUE_FOLDER}\Cable Bahamas Group_CORPORATE REVENUE.twb"
 )
 REVENUE_MEDIA_WORKBOOK = rf"{_REVENUE_FOLDER}\Cable Bahamas Group_MEDIA REVENUE.twb"
+# "CBL Group Revenue_Finance View" (Other / MSA-ALIV individual captures).
+REVENUE_FINANCE_WORKBOOK = rf"{_REVENUE_FOLDER}\CBL Group Revenue_Finance View.twb"
 
 
 # ============================================================
@@ -737,15 +754,15 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
     {
         "company": "ALIV",
         "fs_line": "Other",
-        "individual_tableau_workbook": REVENUE_CONSUMER_WORKBOOK,
-        "individual_tableau_worksheet": (
-            "ALIV RESIDENTIAL REVENUE Detail - Monthly Actual v Budget YTD"
-        ),
-        "mapping_column": "GL FS Type",
-        "mapping_values": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
+        "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
+        # Total row of the OTHER REVENUE type. YTD = sum of the month columns.
+        "lookup": {
+            "GL FS Revenue by Type": "OTHER REVENUE",
+            "GL FS IS Breakdown": "Total",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
-        "note": "Confirm all applicable OTHER CONSUMER GL FS Type values.",
     },
     {
         "company": "ALIV",
@@ -808,34 +825,56 @@ INDIVIDUAL_REVENUE_MAPPINGS = [
         "fs_line": "Government",
         "individual_tableau_workbook": REVENUE_CORPORATE_WORKBOOK,
         "individual_tableau_worksheet": (
-            "CBL COMMERCIAL REVENUE DETAILS - Monthly Actuals"
+            "CBL COMMERCIAL REVENUE by Sub Account Description - Monthly Actual v Budget"
         ),
-        "mapping_column": "GL FS Type",
-        "mapping_values": ["CORPORATE GOVERNMENT"],
-        "aggregation": AGG_PENDING,
+        # The row to read: every column named here must match (the Total row
+        # of the CORPORATE GOVERNMENT category).
+        "lookup": {
+            "GL Bus Code Name": "ALIV BUSINESS",
+            "GL FS Category": "CORPORATE GOVERNMENT",
+            "GL Account Mapping": "Total",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "Media",
         "individual_tableau_workbook": REVENUE_MEDIA_WORKBOOK,
-        "individual_tableau_worksheet": (" Monthly YTD Actual v Budget by Sub account"),
-        "tableau_categories": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_worksheet": "Monthly YTD Actual v Budget by Sub account",
+        # YTD is captured from this worksheet instead (matched by name).
+        "individual_tableau_worksheet_ytd": "Year to Date Summary",
+        # Every sub-account row whose GL Account Mapping is MEDIA REVENUE is
+        # added up (months summed too); checked against the Grand Total row.
+        "lookup": {"GL Account Mapping": "MEDIA REVENUE"},
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "Other",
-        "tableau_categories": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
+        "individual_tableau_worksheet": "CBL Monthly Revenue Forecast",
+        "lookup": {
+            "GL Bus Code Name": "HFC FIXED NETWORK CONSUMER",
+            "GL FS Category": "OTHER SUBSCRIBER",
+            "GL Account Mapping": "SMART HOME PRODUCTS REVENUE",
+            "GL Sub Account Description": "RING REVENUE",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {
         "company": "CBL",
         "fs_line": "MSA-ALIV",
-        "tableau_categories": [],
-        "aggregation": AGG_PENDING,
+        "individual_tableau_workbook": REVENUE_FINANCE_WORKBOOK,
+        "individual_tableau_worksheet": "CBL Monthly Revenue Forecast",
+        # Statement MSA-ALIV = the INTERCOMPANY business code (its Total row).
+        "lookup": {
+            "GL Bus Code Name": "INTERCOMPANY",
+            "GL FS Category": "Total",
+        },
+        "aggregation": AGG_SUM,
         "individual_actuals_enabled": True,
     },
     {

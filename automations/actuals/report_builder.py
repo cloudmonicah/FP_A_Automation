@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Iterable
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.formatting.rule import CellIsRule, FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -40,7 +41,13 @@ META_SHEET = "_meta"
 OVERALL_PREFIX = "OVERALL VALIDATION STATUS:"
 
 # Lines rendered as totals (bold with a top rule).
-TOTAL_LINES = {"OPERATING EXPENSES", "DIRECT COST", "GROSS REVENUE"}
+TOTAL_LINES = {
+    "OPERATING EXPENSES",
+    "DIRECT COST",
+    "COST OF GOODS SOLD",
+    "GROSS REVENUE",
+    "SERVICE REVENUES",
+}
 
 # --- Styling --------------------------------------------------------------
 FONT_NAME = "Aptos"
@@ -79,6 +86,7 @@ SOURCE_NOTE_COL = 16  # P (hidden)
 LAST_COL = 15  # O
 HEADER_ROW = 6
 FIRST_DATA_ROW = 7
+TOLERANCE_CELL = "$M$4"
 
 
 def canonical(value) -> str:
@@ -104,6 +112,13 @@ class PeriodValues:
     fs: float | None = None
     consolidated: float | None = None
     individual: float | None = None
+    # Total lines add up lines that were each rounded to whole thousands, so
+    # they may drift by up to 0.5 per line. This widens the tolerance for them.
+    allowance: float = 0.0
+
+    @property
+    def tolerance(self) -> float:
+        return TOLERANCE_000 + self.allowance
 
     @property
     def v1(self):
@@ -118,7 +133,7 @@ class PeriodValues:
         v1, v2 = self.v1, self.v2
         if v1 is None or v2 is None:
             return STATUS_PENDING
-        if abs(v1) <= TOLERANCE_000 and abs(v2) <= TOLERANCE_000:
+        if abs(v1) <= self.tolerance and abs(v2) <= self.tolerance:
             return STATUS_PASS
         return STATUS_REVIEW
 
@@ -129,11 +144,11 @@ class PeriodValues:
             parts.append("Financial statement value missing")
         if self.consolidated is None:
             parts.append("Consolidated Tableau value missing")
-        elif v1 is not None and abs(v1) > TOLERANCE_000:
+        elif v1 is not None and abs(v1) > self.tolerance:
             parts.append(f"Consolidated differs from FS by {v1:,.1f}")
         if self.individual is None:
             parts.append("Individual Tableau not captured")
-        elif v2 is not None and abs(v2) > TOLERANCE_000:
+        elif v2 is not None and abs(v2) > self.tolerance:
             parts.append(f"Individual differs from consolidated by {v2:,.1f}")
         return "; ".join(parts)
 
@@ -187,6 +202,73 @@ def overall_status(statuses: Iterable[str]) -> str:
     if not statuses or any(s != STATUS_PASS for s in statuses):
         return STATUS_PENDING
     return STATUS_PASS
+
+
+def total_components(lines: list[ReportLine]) -> dict[int, tuple[int, int]]:
+    """For each total line, the (first, last) list indexes of the lines it sums.
+
+    A total sums the contiguous non-total lines directly above it.
+    """
+    result = {}
+    start = 0
+    for index, line in enumerate(lines):
+        if line.is_total:
+            if index > start:
+                result[index] = (start, index - 1)
+            start = index + 1
+    return result
+
+
+def _note_formula(status_ref: str, text: str):
+    """Notes stay empty while the line's Status is PASS (live, like the Status)."""
+    if not text:
+        return None
+    safe = text.replace('"', '""')
+    # Excel limits a quoted text constant inside a formula to 255 characters.
+    chunks = [safe[i : i + 240] for i in range(0, len(safe), 240)]
+    joined = "&".join(f'"{c}"' for c in chunks)
+    return f'=IF({status_ref}="{STATUS_PASS}","",{joined})'
+
+
+def apply_zero_rule(sheet: CompanySheet) -> None:
+    """A line the statement reports as 0 shows 0 (not a blank) in the Tableau
+    columns too: Tableau lists no rows for a category with no postings."""
+    for line in sheet.lines:
+        if line.is_total:
+            continue
+        for period in (line.monthly, line.ytd):
+            if period.fs == 0:
+                if period.consolidated is None:
+                    period.consolidated = 0.0
+                if period.individual is None:
+                    period.individual = 0.0
+
+
+def apply_total_rules(sheet: CompanySheet) -> None:
+    """Total lines show the sum of the lines above in the Consolidated and
+    Individual columns (the Financial Statement column is never changed).
+    The workbook carries the same rule as an Excel SUM formula."""
+    for index, (first, last) in total_components(sheet.lines).items():
+        total = sheet.lines[index]
+        for period in ("monthly", "ytd"):
+            for attr in ("consolidated", "individual"):
+                parts = [
+                    getattr(getattr(sheet.lines[i], period), attr)
+                    for i in range(first, last + 1)
+                ]
+                numbers = [p for p in parts if is_number(p)]
+                setattr(
+                    getattr(total, period),
+                    attr,
+                    float(sum(numbers)) if numbers else None,
+                )
+        for period in ("monthly", "ytd"):
+            counted = sum(
+                1
+                for i in range(first, last + 1)
+                if is_number(getattr(sheet.lines[i], period).consolidated)
+            )
+            getattr(total, period).allowance = 0.5 * counted
 
 
 # --- Reading existing workbooks -------------------------------------------
@@ -366,6 +448,55 @@ def _row_height(ws, row) -> float:
     return max(20, 13 * lines + 7)
 
 
+def _row_tolerance(components, start: int) -> str:
+    """Excel text for a row's tolerance: M4, plus 0.5 per summed line on total rows."""
+    if not components:
+        return TOLERANCE_CELL
+    letter = get_column_letter(start + 1)
+    rng = f"{letter}{FIRST_DATA_ROW + components[0]}:{letter}{FIRST_DATA_ROW + components[1]}"
+    return f"({TOLERANCE_CELL}+0.5*COUNT({rng}))"
+
+
+def _add_conditional_formats(ws, line_count: int, components_by_row=None) -> None:
+    """Colour variances and statuses from their live values, so the colours
+    follow the formulas when someone edits a number."""
+    if not line_count:
+        return
+    last_row = FIRST_DATA_ROW + line_count - 1
+    flag_fill = _fill(VARIANCE_FLAG_FILL)
+    flag_font = Font(name=FONT_NAME, bold=True, color="9C0006")
+    components_by_row = components_by_row or {}
+    for start in (MONTHLY_COL, YTD_COL):
+        for offset in (3, 4):
+            letter = get_column_letter(start + offset)
+            for index in range(line_count):
+                row = FIRST_DATA_ROW + index
+                tol = _row_tolerance(components_by_row.get(index), start)
+                ws.conditional_formatting.add(
+                    f"{letter}{row}",
+                    FormulaRule(
+                        formula=[f"AND(ISNUMBER({letter}{row}),ABS({letter}{row})>{tol})"],
+                        fill=flag_fill,
+                        font=flag_font,
+                    ),
+                )
+        letter = get_column_letter(start + 5)
+        targets = [f"{letter}{FIRST_DATA_ROW}:{letter}{last_row}"]
+        if start == MONTHLY_COL:
+            targets.append("M2")
+        for rng in targets:
+            for label, (fill, color) in STATUS_STYLES.items():
+                ws.conditional_formatting.add(
+                    rng,
+                    CellIsRule(
+                        operator="equal",
+                        formula=[f'"{label}"'],
+                        fill=_fill(fill),
+                        font=Font(name=FONT_NAME, bold=True, color=color),
+                    ),
+                )
+
+
 def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
     ws.sheet_view.showGridLines = False
     ws.sheet_view.zoomScale = 90
@@ -386,6 +517,19 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
     ws.cell(2, 12).alignment = Alignment(horizontal="right", vertical="center")
     ws.merge_cells(start_row=2, start_column=13, end_row=2, end_column=LAST_COL)
     _style_status(ws.cell(2, 13), sheet.status)
+    last_row = FIRST_DATA_ROW + len(sheet.lines) - 1
+    status_ranges = [
+        f"{get_column_letter(c + 5)}{FIRST_DATA_ROW}:{get_column_letter(c + 5)}{last_row}"
+        for c in (MONTHLY_COL, YTD_COL)
+    ]
+
+    def _count(label):
+        return "+".join(f'COUNTIF({r},"{label}")' for r in status_ranges)
+
+    ws.cell(2, 13).value = (
+        f'=IF({_count(STATUS_REVIEW)}>0,"{STATUS_REVIEW}",'
+        f'IF({_count(STATUS_PASS)}={len(sheet.lines) * 2},"{STATUS_PASS}","{STATUS_PENDING}"))'
+    )
     ws.row_dimensions[2].height = 22
 
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=LAST_COL)
@@ -394,11 +538,20 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
         1,
         "All amounts in $000.  V1 = Consolidated Tableau − Financial Statement.  "
         "V2 = Individual Tableau − Consolidated Tableau.  "
-        f"PASS when both are within ±{TOLERANCE_000:,.0f}.  "
+        "V1, V2, Status and total lines are live Excel formulas.  "
+        "PASS when both variances are within the tolerance in M4 (totals also allow 0.5 per line for rounding).  "
         "Shaded variances are outside tolerance.",
     )
     legend.font = _font(size=9, italic=True, color="6B7785")
     legend.alignment = Alignment(vertical="center", indent=1)
+
+    ws.cell(4, 12, "Tolerance (± $000)").font = _font(size=10, bold=True, color="44546A")
+    ws.cell(4, 12).alignment = Alignment(horizontal="right", vertical="center")
+    tol = ws.cell(4, 13, TOLERANCE_000)
+    tol.font = _font(size=10, bold=True, color="1F3FBF")
+    tol.fill = _fill("FFF9DB")
+    tol.number_format = "0.0"
+    tol.alignment = Alignment(horizontal="center", vertical="center")
 
     # Block banners
     period = meta.closed_period or ""
@@ -439,25 +592,55 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
         if band:
             name.fill = band
 
+        components = total_components(sheet.lines).get(index)
         for start, values in ((MONTHLY_COL, line.monthly), (YTD_COL, line.ytd)):
-            amounts = (values.fs, values.consolidated, values.individual, values.v1, values.v2)
+            fs_c, cons_c, ind_c, v1_c, v2_c = (get_column_letter(start + i) for i in range(5))
+            amounts = (values.fs, values.consolidated, values.individual)
             for offset, amount in enumerate(amounts):
+                if offset > 0 and components:
+                    # Total line: sum of the lines above in this column.
+                    col_letter = get_column_letter(start + offset)
+                    rng = (
+                        f"{col_letter}{FIRST_DATA_ROW + components[0]}:"
+                        f"{col_letter}{FIRST_DATA_ROW + components[1]}"
+                    )
+                    amount = f'=IF(COUNT({rng})=0,"",SUM({rng}))'
                 cell = ws.cell(row, start + offset, amount)
                 cell.number_format = AMOUNT_FORMAT
                 cell.font = _font(size=10, bold=line.is_total)
                 cell.alignment = Alignment(horizontal="right", vertical="center")
-                if offset >= 3 and amount is not None and abs(amount) > TOLERANCE_000:
-                    cell.fill = _fill(VARIANCE_FLAG_FILL)
-                    cell.font = _font(size=10, bold=True, color="9C0006")
-                elif band:
+                if band:
                     cell.fill = band
-            _style_status(ws.cell(row, start + 5), values.status)
+            # V1, V2 and Status are formulas so they show in the formula bar.
+            ws.cell(row, start + 3).value = (
+                f'=IF(OR({fs_c}{row}="",{cons_c}{row}=""),"",ROUND({cons_c}{row}-{fs_c}{row},6))'
+            )
+            ws.cell(row, start + 4).value = (
+                f'=IF(OR({cons_c}{row}="",{ind_c}{row}=""),"",ROUND({ind_c}{row}-{cons_c}{row},6))'
+            )
+            for offset in (3, 4):
+                cell = ws.cell(row, start + offset)
+                cell.number_format = AMOUNT_FORMAT
+                cell.font = _font(size=10, bold=line.is_total)
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if band:
+                    cell.fill = band
+            status = ws.cell(row, start + 5)
+            tol = _row_tolerance(components, start)
+            status.value = (
+                f'=IF(OR({v1_c}{row}="",{v2_c}{row}=""),"{STATUS_PENDING}",'
+                f'IF(AND(ABS({v1_c}{row})<={tol},ABS({v2_c}{row})<={tol}),'
+                f'"{STATUS_PASS}","{STATUS_REVIEW}"))'
+            )
+            status.font = _font(bold=True, size=10)
+            status.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
             note_parts = [values.note()]
             if start == MONTHLY_COL and line.source_note:
                 note_parts.insert(0, line.source_note)
             note_text = "; ".join(p.strip().rstrip(".") for p in note_parts if p and p.strip())
-            note = ws.cell(row, start + 6, note_text or None)
+            status_ref = f"{get_column_letter(start + 5)}{row}"
+            note = ws.cell(row, start + 6, _note_formula(status_ref, note_text))
             note.font = _font(size=9, color="44546A")
             note.alignment = Alignment(vertical="center", wrap_text=True)
             if band:
@@ -474,6 +657,8 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
                 left=MEDIUM if col == YTD_COL else None,
             )
         row += 1
+
+    _add_conditional_formats(ws, len(sheet.lines), total_components(sheet.lines))
 
     for col in range(1, LAST_COL + 1):
         ws.cell(HEADER_ROW, col).border = Border(left=MEDIUM if col == YTD_COL else None)
@@ -622,6 +807,8 @@ def build_report_workbook(meta: ReportMeta, sheets: list[CompanySheet]) -> Workb
 
     titles = {}
     for sheet in sheets:
+        apply_total_rules(sheet)
+    for sheet in sheets:
         ws = workbook.create_sheet(sheet.title[:31])
         ws.sheet_properties.tabColor = MONTHLY_COLOR if sheet.company == "ALIV" else YTD_COLOR
         _write_company_sheet(ws, sheet, meta)
@@ -643,6 +830,8 @@ def save_report(meta: ReportMeta, sheets: list[CompanySheet], path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     staged = path.with_name(path.stem + ".__tmp__.xlsx")
+    for sheet in sheets:
+        apply_zero_rule(sheet)
     workbook = build_report_workbook(meta, sheets)
     try:
         workbook.save(staged)
@@ -728,5 +917,47 @@ def report_status(path) -> str:
                 if isinstance(value, str) and value.startswith(OVERALL_PREFIX):
                     return value.split(":", 1)[1].strip()
         return STATUS_PENDING
+    finally:
+        workbook.close()
+
+
+def add_run_notes_sheet(path, *, filters=(), notes=()) -> None:
+    """Add a 'Run Notes' tab: filters set in each Tableau workbook and capture problems.
+
+    Formulas in the report are left untouched (the file is opened normally,
+    not value-only).
+    """
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    workbook = load_workbook(path)
+    try:
+        if "Run Notes" in workbook.sheetnames:
+            del workbook["Run Notes"]
+        ws = workbook.create_sheet("Run Notes", 1)
+        ws.sheet_properties.tabColor = "243F5C"
+
+        def block(row, title, rows):
+            ws.cell(row, 1, title).font = Font(bold=True, size=12, color="243F5C")
+            row += 1
+            if not rows:
+                ws.cell(row, 1, "None")
+                return row + 2
+            headers = list(dict.fromkeys(k for r in rows for k in r))
+            for c, h in enumerate(headers, 1):
+                cell = ws.cell(row, c, h)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = PatternFill("solid", fgColor="703070")
+                cell.alignment = Alignment(horizontal="center")
+            for r in rows:
+                row += 1
+                for c, h in enumerate(headers, 1):
+                    ws.cell(row, c, str(r.get(h, "")))
+            return row + 2
+
+        nxt = block(1, "Filters set in the source Tableau workbooks (saved before each capture)", list(filters))
+        block(nxt, "Capture problems (a missing value means its capture failed; see the note)", list(notes))
+        for col, width in zip("ABCDEFGH", (14, 46, 18, 22, 22, 30, 40, 40)):
+            ws.column_dimensions[col].width = width
+        workbook.save(path)
     finally:
         workbook.close()

@@ -1,5 +1,6 @@
 """Mapped ALIV OPEX monthly/YTD tests, separate from forecast runs."""
 
+from shared.friendly_errors import explain
 from pathlib import Path
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, datetime
@@ -489,6 +490,7 @@ def _capture_mapping(
     closer=None,
     wait_seconds=8,
     tableau_settings=None,
+    route_override=None,
 ):
     from automations.actuals.tableau_standalone_forecast_service import (
         _append_crosstab_audit,
@@ -518,7 +520,7 @@ def _capture_mapping(
 
         closer = close_tableau_forecast_workbook
 
-    route = _route_for(mapping)
+    route = route_override or _route_for(mapping)
     source = Path(source or route["individual_tableau_workbook"])
     tab = route["individual_tableau_worksheet"]
 
@@ -674,7 +676,7 @@ def _capture_mapping(
             print(f"[INDIVIDUAL OPEX] Audit export warning: {audit_exc}", flush=True)
 
     except Exception as exc:
-        capture_error = f"{type(exc).__name__}: {exc}"
+        capture_error = explain(exc)
         print(
             f"[INDIVIDUAL OPEX] ERROR: {capture_error}",
             flush=True,
@@ -731,7 +733,7 @@ def _capture_mapping(
             row[3] = float(actual)
             row[4] = rounded
         except Exception as exc:
-            row[13] = f"Actual extraction error: {type(exc).__name__}: {exc}"
+            row[13] = explain(exc)
             results.append(row)
             continue
 
@@ -760,7 +762,7 @@ def _capture_mapping(
             row[7] = "PASS" if variance == 0 and consolidated_variance == 0 else "FAIL"
 
         except Exception as exc:
-            row[13] = f"{type(exc).__name__}: {exc}"
+            row[13] = explain(exc)
 
         if close_warning:
             row[13] += close_warning
@@ -768,6 +770,45 @@ def _capture_mapping(
         results.append(row)
 
     return results
+
+
+def _combine_source_rows(parts):
+    """Add the individual Tableau amounts of several workbooks into one result.
+
+    ``parts`` is a list of ``[month_row, ytd_row]`` pairs from _capture_mapping.
+    The statement and consolidated figures are the same in every part, so the
+    first part supplies them; only the individual amount is summed, then the
+    variances and status are recomputed from the sum.
+    """
+    combined = []
+    for index in (0, 1):
+        rows = [part[index] for part in parts]
+        row = list(rows[0])
+        row[8] = " + ".join(str(r[8]) for r in rows)
+        row[9] = " + ".join(str(r[9]) for r in rows)
+        row[10] = " + ".join(str(r[10]) for r in rows if r[10])
+        failed = [r for r in rows if r[3] is None]
+        if failed:
+            row[3] = row[4] = row[5] = row[6] = None
+            row[7] = "ACTION REQUIRED"
+            row[13] = " | ".join(str(r[13]) for r in failed if r[13]) or "Capture failed"
+            combined.append(row)
+            continue
+        actual = sum(float(r[3]) for r in rows)
+        rounded = _rounded(Decimal(str(actual)) / 1000)
+        row[3], row[4] = actual, rounded
+        statement, consolidated = row[1], row[2]
+        row[13] = ""
+        if statement is None or consolidated is None:
+            row[5] = row[6] = None
+            row[7] = "ACTION REQUIRED"
+            row[13] = " | ".join(str(r[13]) for r in rows if r[13])
+        else:
+            row[5] = rounded - _rounded(Decimal(str(statement)))
+            row[6] = rounded - _rounded(Decimal(str(consolidated)))
+            row[7] = "PASS" if row[5] == 0 and row[6] == 0 else "FAIL"
+        combined.append(row)
+    return combined
 
 
 def run_individual_opex_pilot(
@@ -827,30 +868,52 @@ def run_individual_opex_pilot(
                     continue
                 print(f"Individual actuals: {mapping['company']} / {mapping['fs_line']}"
                       f" | {route['individual_tableau_workbook']}", flush=True)
-                rows = _capture_mapping(
-                    report_path=report_path,
-                    aliv_fs_path=aliv_fs_path,
-                    cbl_fs_path=cbl_fs_path,
-                    output_paths=output_paths,
-                    closed_period=closed_period,
-                    mapping=mapping,
-                    report=report,
-                    raw=raw,
-                    audit=audit,
-                    sequence_offset=len(groups),
-                    source=None,
-                    capture=capture,
-                    opener=opener,
-                    closer=closer,
-                    wait_seconds=wait_seconds,
-                    tableau_settings=tableau_settings,
-                )
+                # A line may be the SUM of several workbooks (e.g. General and
+                # Administration = Gen & Admin_Finance + Head Office).
+                sources = route.get("individual_sources") or [None]
+                parts = []
+                for extra in sources:
+                    override = None
+                    if extra is not None:
+                        override = {
+                            **route,
+                            "individual_tableau_workbook": extra["workbook"],
+                            "individual_tableau_worksheet": extra["worksheet"],
+                        }
+                        print(
+                            f"Individual actuals: {mapping['company']} / "
+                            f"{mapping['fs_line']} (part) | {extra['workbook']} | "
+                            f"{extra['worksheet']}",
+                            flush=True,
+                        )
+                    parts.append(
+                        _capture_mapping(
+                            report_path=report_path,
+                            aliv_fs_path=aliv_fs_path,
+                            cbl_fs_path=cbl_fs_path,
+                            output_paths=output_paths,
+                            closed_period=closed_period,
+                            mapping=mapping,
+                            report=report,
+                            raw=raw,
+                            audit=audit,
+                            sequence_offset=len(groups) + len(parts),
+                            source=None,
+                            capture=capture,
+                            opener=opener,
+                            closer=closer,
+                            wait_seconds=wait_seconds,
+                            tableau_settings=tableau_settings,
+                            route_override=override,
+                        )
+                    )
+                rows = parts[0] if len(parts) == 1 else _combine_source_rows(parts)
             except Exception as exc:
                 import traceback
                 print(f"[INDIVIDUAL OPEX] SKIPPED {mapping['company']} / "
                       f"{mapping['fs_line']}: {type(exc).__name__}: {exc}", flush=True)
                 traceback.print_exc()
-                rows = unavailable_pair(f"{type(exc).__name__}: {exc}")
+                rows = unavailable_pair(explain(exc))
 
             groups.append((mapping, rows))
             # Commit every mapping immediately. A later failure cannot erase

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain, friendly
 
 import logging
 
@@ -439,7 +440,7 @@ class BudgetSetupView(tb.Frame):
 
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
-            error_message = f"{type(exc).__name__}: {exc}"
+            error_message = explain(exc)
 
             self.after(
                 0,
@@ -542,7 +543,7 @@ class BudgetSetupView(tb.Frame):
         except OSError as exc:
             messagebox.showerror(
                 "Output folder unavailable",
-                str(exc),
+                friendly(exc),
             )
             return False
 

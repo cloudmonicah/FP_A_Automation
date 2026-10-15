@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain
 
 from pathlib import Path
 from typing import Any
@@ -619,7 +620,7 @@ def create_forecast_refresh(
                 {
                     "file": source_file.name,
                     "path": str(source_file),
-                    "error": f"{type(exc).__name__}: " f"{exc}",
+                    "error": explain(exc),
                 }
             )
 

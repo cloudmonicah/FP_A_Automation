@@ -18,6 +18,7 @@ from automations.forecast.service import (
     validate_monthly_forecast,
 )
 from shared.forecast_output_paths import get_forecast_validation_output_folder
+from shared.friendly_errors import explain, friendly
 from ui.common import confirm_close_tableau, get_attention
 
 MONTH_LOOKUP = {
@@ -787,8 +788,8 @@ class ForecastRefreshView(tb.Frame):
         get_attention(self, success=False)
         self.progress_var.set(0)
         self.status_var.set("Process Failed")
-        self.status_description_var.set(f"{type(error).__name__}: {error}")
-        self._error("Monthly Forecast Automation", f"{type(error).__name__}: {error}")
+        self.status_description_var.set(explain(error))
+        self._error("Monthly Forecast Automation", friendly(error))
 
     def _reset_view(self) -> None:
         if self._busy:
