@@ -156,6 +156,27 @@ def _extract(ws, route, closed_period):
             _thousands(ytd) if ytd is not None else None, note)
 
 
+def _extract_company_total(ws, route, closed_period):
+    """Read a Monthly / YTD company total from a month-columns crosstab (OPEX-style tab)."""
+    import csv
+    import tempfile
+    from automations.actuals.individual_opex_crosstab_parser import extract_monthly_ytd
+    rows = [['' if v is None else str(v) for v in row] for row in ws.values]
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, newline='', encoding='utf-8') as fh:
+            path = fh.name
+            csv.writer(fh, delimiter='\t').writerows(rows)
+        actuals = extract_monthly_ytd(path, route['company'], closed_period, route.get('fiscal_start_month', 7))
+    except Exception as exc:
+        return None, None, f'The Media table could not be read: {exc}'
+    finally:
+        if path:
+            Path(path).unlink(missing_ok=True)
+    month, ytd = Decimal(str(actuals['MONTH'])), Decimal(str(actuals['YTD']))
+    return _thousands(month), _thousands(ytd), f'Added {route["fs_line"]}: Monthly {month:,.0f}; YTD {ytd:,.0f} (dollars)'
+
+
 def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
     """Write captured individual values into the final report and rebuild it.
 
@@ -167,9 +188,13 @@ def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
     results = []
     raw = load_workbook(crosstab_path, read_only=True, data_only=True)
     try:
+        components = []
         for index, route in enumerate(INDIVIDUAL_DIRECT_COST_MAPPINGS, 1):
             company, line = route['company'], route['fs_line']
             name = re.sub(r'[\\/*?:\[\]]', '_', f'{index:03d}_{company}_{line}')[:31]
+            if route.get('add_to'):
+                components.append((route, name))
+                continue
             monthly = ytd = None
             if name in raw.sheetnames:
                 monthly, ytd, note = _extract(raw[name], route, closed_period)
@@ -178,6 +203,26 @@ def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
             reason = None if monthly is not None and ytd is not None else f'Individual capture: {note}'
             updates[company][line] = (monthly, ytd, reason)
             results.append([company, line, 'YTD CAPTURED' if ytd is not None else 'REVIEW REQUIRED', note])
+        for route, name in components:
+            company, target = route['company'], route['add_to']
+            if name in raw.sheetnames:
+                extra_m, extra_y, extra_note = _extract_company_total(raw[name], route, closed_period)
+            else:
+                extra_m = extra_y = None
+                extra_note = 'Capture worksheet missing (failed or skipped Tableau capture)'
+            monthly, ytd, reason = updates[company].get(target, (None, None, None))
+            if extra_m is None or extra_y is None:
+                reason = f'{route["fs_line"]}: {extra_note}'
+                monthly = ytd = None
+                status = 'REVIEW REQUIRED'
+            else:
+                if monthly is not None:
+                    monthly += extra_m
+                if ytd is not None:
+                    ytd += extra_y
+                status = f'ADDED TO {target.upper()}'
+            updates[company][target] = (monthly, ytd, reason)
+            results.append([company, route['fs_line'], status, extra_note])
     finally:
         raw.close()
 

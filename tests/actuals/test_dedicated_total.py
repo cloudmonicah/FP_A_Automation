@@ -27,3 +27,20 @@ def test_reseller_total_row_is_read_directly():
              "dedicated_total": True, "tableau_categories": []}
     month, ytd, _ = _extract(ws, route, AUG)
     assert (month, ytd) == (352, 718)
+
+
+def test_media_is_added_to_programming_fees():
+    import tempfile
+    from pathlib import Path
+    from openpyxl import load_workbook
+    from automations.actuals import direct_cost_individual_merge as m
+
+    route_pf = {"company": "CBL", "fs_line": "Programming fees"}
+    media = _sheet([
+        ["", "", "July 2026", "August 2026", "Grand Total"],
+        ["Company", "GL Account Mapping", "Actual", "Actual", "Actual YTD"],
+        ["CBL", "Total", 100000, 62000, 162000],
+        ["Grand Total", "", 100000, 62000, 162000],
+    ])
+    month, ytd, _ = m._extract_company_total(media, {"company": "CBL", "fs_line": "Programming fees - Media"}, AUG)
+    assert (month, ytd) == (62, 162), (month, ytd)

@@ -419,6 +419,18 @@ INDIVIDUAL_DIRECT_COST_MAPPINGS = [
         "individual_actuals_enabled": True,
     },
     {
+        # Media's costs belong in Programming fees, so this capture is added to
+        # that line instead of being reported as a line of its own.
+        "company": "CBL",
+        "fs_line": "Programming fees - Media",
+        "add_to": "Programming fees",
+        "individual_tableau_workbook": workbook_path("OPEX", "Media.twb"),
+        "individual_tableau_worksheet": "Monthly Subaccount Actual v Budget",
+        "tableau_categories": [],
+        "aggregation": AGG_DIRECT,
+        "individual_actuals_enabled": True,
+    },
+    {
         "company": "CBL",
         "fs_line": "Hardware/PBX",
         "individual_tableau_workbook": rf"{_DC_FOLDER}\Group_Direct Costs_Aliv Business.twb",
