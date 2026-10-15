@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain, friendly
 
 import logging
 
@@ -687,7 +688,7 @@ class ActualsValidationView(tb.Frame):
 
             messagebox.showerror(
                 "Validation Workspace Error",
-                str(exc),
+                friendly(exc),
                 parent=self.winfo_toplevel(),
             )
 
@@ -803,7 +804,7 @@ class ActualsValidationView(tb.Frame):
         except ValueError as exc:
             messagebox.showerror(
                 "Tableau Settings",
-                str(exc),
+                friendly(exc),
                 parent=self.winfo_toplevel(),
             )
             return
@@ -933,7 +934,7 @@ class ActualsValidationView(tb.Frame):
 
             messagebox.showerror(
                 "Actuals Validation",
-                str(exc),
+                friendly(exc),
                 parent=self.winfo_toplevel(),
             )
 
@@ -1014,7 +1015,7 @@ class ActualsValidationView(tb.Frame):
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
             messagebox.showerror(
-                "OPEX-only test", str(exc), parent=self.winfo_toplevel()
+                "OPEX-only test", friendly(exc), parent=self.winfo_toplevel()
             )
 
     def _individual_opex_only_worker(self, *, report, aliv, cbl, period, settings):
@@ -1039,7 +1040,7 @@ class ActualsValidationView(tb.Frame):
             self.after(0, self._finish_individual_opex_only, status, result)
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
-            self.after(0, self._actuals_validation_failed, str(exc))
+            self.after(0, self._actuals_validation_failed, explain(exc))
 
     def _finish_individual_opex_only(self, status, result):
         self.validation_progress_bar.stop()
@@ -1088,7 +1089,7 @@ class ActualsValidationView(tb.Frame):
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
             messagebox.showerror(
-                "Reporting period", str(exc), parent=self.winfo_toplevel()
+                "Reporting period", friendly(exc), parent=self.winfo_toplevel()
             )
             return
         self.validation_running = True
@@ -1158,7 +1159,7 @@ class ActualsValidationView(tb.Frame):
             self.after(0, self._revenue_live_test_finished, str(folder), None)
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
-            self.after(0, self._revenue_live_test_finished, str(folder), str(exc))
+            self.after(0, self._revenue_live_test_finished, str(folder), explain(exc))
 
     def _revenue_live_test_finished(self, folder, error):
         from tkinter import messagebox
@@ -1345,7 +1346,7 @@ class ActualsValidationView(tb.Frame):
             self.after(0, self._finish_actuals_validation, {category: result})
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
-            self.after(0, self._actuals_validation_failed, str(exc))
+            self.after(0, self._actuals_validation_failed, explain(exc))
 
     # =========================================================
     # UPDATE VALIDATION STATUS

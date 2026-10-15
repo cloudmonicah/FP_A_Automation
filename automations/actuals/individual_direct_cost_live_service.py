@@ -3,6 +3,7 @@
 Raw captures are NOT reconciled amounts. Existing financial validation stays unchanged.
 """
 from __future__ import annotations
+from shared.friendly_errors import explain
 import csv
 import re
 import time
@@ -128,7 +129,7 @@ def run_individual_direct_cost_live(*, output_paths, closed_period, tableau_sett
             note = f'Forecast Start edits: {edits}; raw crosstab only, financial reconciliation NOT VERIFIED'
             completed += 1
         except Exception as exc:
-            note = f'{type(exc).__name__}: {exc}'
+            note = explain(exc)
             print(f'[DIRECT COST] ERROR: {note}', flush=True)
         finally:
             if opened:

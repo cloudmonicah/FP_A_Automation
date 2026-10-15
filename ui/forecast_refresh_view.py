@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain, friendly
 
 import logging
 
@@ -816,12 +817,12 @@ class ForecastRefreshView(tb.Frame):
         get_attention(self, success=False)
         self.progress_var.set(0)
         self.status_var.set("Process Failed")
-        self.status_description_var.set(f"{type(error).__name__}: {error}")
+        self.status_description_var.set(explain(error))
         self.prepare_button.configure(state="normal")
 
         messagebox.showerror(
             "Monthly Forecast Automation",
-            f"{type(error).__name__}: {error}",
+            friendly(error),
             parent=self.winfo_toplevel(),
         )
 

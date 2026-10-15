@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.friendly_errors import explain
 
 from datetime import date
 from pathlib import Path
@@ -338,7 +339,7 @@ def populate_monthly_forecast_from_tableau(
                     "workbook": target_name,
                     "worksheet": route["excel_sheet"],
                     "tableau_worksheet": route["tableau_worksheet"],
-                    "error": f"{type(exc).__name__}: {exc}",
+                    "error": explain(exc),
                 }
             )
 
