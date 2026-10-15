@@ -194,6 +194,14 @@ def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
     updates = {company: {} for company in ("ALIV", "CBL")}
     results = []
     raw = load_workbook(crosstab_path, read_only=True, data_only=True)
+    reasons = {}
+    try:
+        if 'Capture Index' in raw.sheetnames:
+            for row in raw['Capture Index'].iter_rows(min_row=2, values_only=True):
+                if row and row[0] and len(row) > 6 and row[6]:
+                    reasons[str(row[0])] = str(row[6])
+    except Exception:
+        reasons = {}
     try:
         components = []
         for index, route in enumerate(INDIVIDUAL_DIRECT_COST_MAPPINGS, 1):
@@ -206,7 +214,7 @@ def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
             if name in raw.sheetnames:
                 monthly, ytd, note = _extract(raw[name], route, closed_period)
             else:
-                note = 'Capture worksheet missing (failed or skipped Tableau capture)'
+                note = reasons.get(name) or 'Capture worksheet missing (failed or skipped Tableau capture)'
             reason = None if monthly is not None and ytd is not None else f'Individual capture: {note}'
             updates[company][line] = (monthly, ytd, reason)
             results.append([company, line, 'YTD CAPTURED' if ytd is not None else 'REVIEW REQUIRED', note])
@@ -216,7 +224,7 @@ def merge_direct_cost_crosstabs(*, report_path, crosstab_path, closed_period):
                 extra_m, extra_y, extra_note = _extract_company_total(raw[name], route, closed_period)
             else:
                 extra_m = extra_y = None
-                extra_note = 'Capture worksheet missing (failed or skipped Tableau capture)'
+                extra_note = reasons.get(name) or 'Capture worksheet missing (failed or skipped Tableau capture)'
             monthly, ytd, reason = updates[company].get(target, (None, None, None))
             if extra_m is None or extra_y is None:
                 reason = f'{route["fs_line"]}: {extra_note}'

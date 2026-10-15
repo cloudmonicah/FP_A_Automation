@@ -36,6 +36,13 @@ _rule(
     ),
 )
 _rule(
+    r"Worksheet not found: (?P<tab>.+)",
+    lambda m, t: (
+        f'The Tableau workbook does not contain a tab called "{m.group("tab").strip()}". '
+        "Check that the workbook and tab name in the mapping are correct."
+    ),
+)
+_rule(
     r"Tableau window|Tableau workbook .* not ready|not ready yet",
     "Tableau did not open in time. Close Tableau, then run again.",
 )
