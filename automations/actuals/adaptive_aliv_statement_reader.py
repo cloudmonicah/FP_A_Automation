@@ -14,7 +14,7 @@ def _date(v):
     return v if isinstance(v,(date,datetime)) else None
 
 
-def read_aliv_period(path, closed_period):
+def read_aliv_period(path, closed_period, area=None):
     wb=load_workbook(Path(path),read_only=True,data_only=True)
     try:
         if 'P & L_' not in wb: raise ValueError('ALIV P & L_ worksheet not found')
@@ -23,12 +23,21 @@ def read_aliv_period(path, closed_period):
         from automations.actuals.statement_columns import locate_aliv_columns
         header,month_col,ytd_col=locate_aliv_columns(rows,closed_period,Path(path).name)
         out={}
+        by_section={}
+        section="Revenue"
         for r in range(header+1,len(rows)):
             row=rows[r]
             label=norm(row[1] if len(row)>1 else None)
             if not label: continue
             month=row[month_col] if len(row)>month_col else None
             ytd=row[ytd_col] if len(row)>ytd_col else None
+            # A label can appear in two sections (e.g. Interconnect is both a
+            # revenue line and a direct cost). Remember each one by section.
+            if isinstance(month,(int,float,Decimal)) and isinstance(ytd,(int,float,Decimal)):
+                key=(section,label)
+                by_section[key]=None if key in by_section else (float(month),float(ytd))
+            if label=="SERVICE REVENUES": section="Direct Cost"
+            elif label=="DIRECT COST": section="Other"
             if label in out:
                 # duplicate labels are ambiguous; do not silently pick one
                 out[label]=None
@@ -40,6 +49,11 @@ def read_aliv_period(path, closed_period):
                 if closed_period.month == 7:
                     ytd = month
                 out[label]=(float(month),float(ytd))
+        if area:
+            wanted={"Revenue":"Revenue","Direct Cost":"Direct Cost","OPEX":"Other"}.get(area)
+            for (sec,label),value in by_section.items():
+                if sec==wanted and value is not None and out.get(label) is None:
+                    out[label]=value
         return out
     finally: wb.close()
 

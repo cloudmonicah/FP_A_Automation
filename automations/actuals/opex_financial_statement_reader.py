@@ -102,6 +102,9 @@ def _canonical_statement_line(
 
     if len(parts) == 2 and parts[0].isdigit():
         text = parts[1].strip()
+    elif len(parts) == 2 and parts[0].upper() == "MD" and parts[1].strip().upper() == "MEDIA":
+        # The statement labels the Media line "MD Media" (MD is its code).
+        text = "Media"
 
     # --------------------------------------------------------
     # Standardize "&" and "and".

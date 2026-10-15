@@ -1,10 +1,3 @@
-"""
-Actuals validation mapping configuration.
-
-Single source of truth for individual OPEX Tableau routes.
-Direct Cost and Revenue can be migrated here later.
-"""
-
 from shared.settings import workbook_path
 
 AGG_DIRECT = "DIRECT"
@@ -242,7 +235,7 @@ OPEX_MAPPINGS = [
         "individual_tableau_workbook": workbook_path(
             "OPEX", "Information Technology.twb"
         ),
-        "individual_tableau_worksheet": "CBL Monthly Subaccount Actual v Budget",
+        "individual_tableau_worksheet": "CBL Monthly Subaccount Actual v Budget (Excl Media)",
         "individual_actuals_enabled": True,
     },
     {

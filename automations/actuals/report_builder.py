@@ -212,6 +212,17 @@ def total_components(lines: list[ReportLine]) -> dict[int, tuple[int, int]]:
     return result
 
 
+def _note_formula(status_ref: str, text: str):
+    """Notes stay empty while the line's Status is PASS (live, like the Status)."""
+    if not text:
+        return None
+    safe = text.replace('"', '""')
+    # Excel limits a quoted text constant inside a formula to 255 characters.
+    chunks = [safe[i : i + 240] for i in range(0, len(safe), 240)]
+    joined = "&".join(f'"{c}"' for c in chunks)
+    return f'=IF({status_ref}="{STATUS_PASS}","",{joined})'
+
+
 def apply_zero_rule(sheet: CompanySheet) -> None:
     """A line the statement reports as 0 shows 0 (not a blank) in the Tableau
     columns too: Tableau lists no rows for a category with no postings."""
@@ -604,7 +615,8 @@ def _write_company_sheet(ws, sheet: CompanySheet, meta: ReportMeta):
             if start == MONTHLY_COL and line.source_note:
                 note_parts.insert(0, line.source_note)
             note_text = "; ".join(p.strip().rstrip(".") for p in note_parts if p and p.strip())
-            note = ws.cell(row, start + 6, note_text or None)
+            status_ref = f"{get_column_letter(start + 5)}{row}"
+            note = ws.cell(row, start + 6, _note_formula(status_ref, note_text))
             note.font = _font(size=9, color="44546A")
             note.alignment = Alignment(vertical="center", wrap_text=True)
             if band:

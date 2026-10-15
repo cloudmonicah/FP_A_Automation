@@ -116,14 +116,14 @@ def write_area_workbook(
     return path
 
 
-def statement_ytd(path, closed_period):
+def statement_ytd(path, closed_period, area=None):
     if not path:
         return {}
     from automations.actuals.adaptive_aliv_statement_reader import read_aliv_period
 
     return {
         k: rounded(v[1])
-        for k, v in read_aliv_period(path, closed_period).items()
+        for k, v in read_aliv_period(path, closed_period, area).items()
         if v is not None
     }
 
@@ -144,7 +144,7 @@ def merge_group_values(
     )
 
     mappings = OPEX_MAPPINGS if area == "OPEX" else DIRECT_COST_MAPPINGS
-    fs_ytd = statement_ytd(aliv_fs_path, closed_period) if aliv_fs_path else {}
+    fs_ytd = statement_ytd(aliv_fs_path, closed_period, area) if aliv_fs_path else {}
     from automations.actuals.cbl_statement_periods import read_cbl_area
 
     cbl_ytd = (
@@ -178,6 +178,11 @@ def merge_group_values(
                 else:
                     keys = [canonical(k) for k in mapping.get("tableau_categories", [])]
                 normalized = {canonical(k): v for k, v in ytd[company].items()}
+                # The statement value does not depend on Tableau, so it is
+                # written even when the consolidated Tableau value is missing.
+                _fs = (fs_ytd if company == "ALIV" else cbl_ytd).get(label)
+                if _fs is not None:
+                    sheet.cell(row, 8, _fs)
                 if not keys or any(k not in normalized for k in keys):
                     status_cell(sheet.cell(row, 11), "ACTION REQUIRED")
                     continue
