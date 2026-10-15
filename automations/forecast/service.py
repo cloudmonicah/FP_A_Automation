@@ -7,6 +7,9 @@ import re
 import xml.etree.ElementTree as ET
 
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+
+from shared import excel_style as style
 
 from .excel_service import (
     create_forecast_refresh,
@@ -265,6 +268,13 @@ def write_tableau_audit_workbook(
             ws.append(headers)
             for row in rows:
                 ws.append([row.get(header) for header in headers])
+            style.header_row(ws, 1, 1, len(headers))
+            for data_row in ws.iter_rows(min_row=2):
+                for cell in data_row:
+                    cell.font = style.font()
+            for col in range(1, len(headers) + 1):
+                ws.column_dimensions[get_column_letter(col)].width = 16
+            ws.freeze_panes = "A2"
 
     if not wb.sheetnames:
         wb.create_sheet("No Data")

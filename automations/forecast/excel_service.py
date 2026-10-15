@@ -1,4 +1,5 @@
 from __future__ import annotations
+from shared.excel_style import normalize_fonts
 from shared.friendly_errors import PlainLanguageError, explain
 
 from pathlib import Path
@@ -279,6 +280,9 @@ def update_forecast_workbook(
     try:
 
         for worksheet in workbook.worksheets:
+
+            # One font and size across every forecast workbook.
+            normalize_fonts(worksheet)
 
             header_row, forecast_column = find_header(
                 worksheet,
@@ -1224,6 +1228,7 @@ def populate_forecast_sheet_from_tableau_rows(
                 ws.cell(excel_row, col).value = value
 
         total_row = _s4_finalize(ws, structure, fiscal_year, last)
+        normalize_fonts(ws)
         wb.save(workbook_path)
 
         return {
