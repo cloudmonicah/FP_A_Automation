@@ -59,6 +59,35 @@ def _find_header(rows, closed_period):
             ytd[0] if len(ytd) == 1 else None)
 
 
+def _extract_dedicated_total(rows, header, cat_col, company_col, month_col, ytd_col, company):
+    """A worksheet that already holds this line's total: read its total row.
+
+    Prefers the company's own total row, then the Grand Total row, then a lone
+    data row. Anything else is reported instead of guessed.
+    """
+    data = [r for r in rows[header + 1:] if any(v is not None and str(v).strip() for v in r)]
+    width = max(cat_col or 0, company_col or 0) + 1
+    def labels(row):
+        return [_key(x) for x in row[:max(width, 1)]]
+    def is_total(row):
+        return any(x in ('GRANDTOTAL', 'TOTAL', 'SUBTOTAL') for x in labels(row))
+    own = [r for r in data if is_total(r) and company_col is not None and company_col < len(r)
+           and _key(r[company_col]) == company]
+    grand = [r for r in data if any(x == 'GRANDTOTAL' for x in labels(r))]
+    pick = own[0] if len(own) == 1 else grand[0] if len(grand) == 1 else data[0] if len(data) == 1 else None
+    if pick is None:
+        return None, None, 'The Reseller Commissions total row could not be identified in the Tableau table'
+    def value(column):
+        if column is None or column >= len(pick):
+            return None
+        return _number(pick[column])
+    monthly, ytd = value(month_col), value(ytd_col)
+    note = (f'Read the worksheet total row; Monthly: {monthly if monthly is not None else "unavailable"}; '
+            f'YTD: {ytd if ytd is not None else "unavailable"}')
+    return (_thousands(monthly) if monthly is not None else None,
+            _thousands(ytd) if ytd is not None else None, note)
+
+
 def _extract(ws, route, closed_period):
     rows = list(ws.values)
     found = _find_header(rows, closed_period)
@@ -74,8 +103,8 @@ def _extract(ws, route, closed_period):
     categories = {_key(x) for x in route.get('tableau_categories', []) if x}
     # Correct the legacy ALIV reseller labels to the actual GL Account Mapping
     # values observed in both the consolidated and individual Tableau exports.
-    if company == 'ALIV' and line == 'RESELLERCOMMISSIONS':
-        categories = {'PUSHTOTALKCOMMISSION', 'TOPUPANDPLANCOMMISSION'}
+    if route.get('dedicated_total'):
+        return _extract_dedicated_total(rows, header, cat_col, company_col, month_col, ytd_col, company)
     # Control total: sum distinct detail rows in the single ALIV source capture;
     # never add it on top of the component mapping values.
     if aggregation == 'TOTAL' and company == 'ALIV' and line == 'DIRECTCOST':
