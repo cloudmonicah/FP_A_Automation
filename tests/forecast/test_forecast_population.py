@@ -122,3 +122,43 @@ def test_check_consolidated_workbook_leaves_no_files(setup):
     assert period["forecast_type"] == "FY27 Forecast_102026"
     assert not list(temp_folder.iterdir())
     assert sorted(p.name for p in source.parent.iterdir()) == [source.name]
+
+
+def test_population_runs_only_the_selected_category(setup, monkeypatch):
+    source, temp_folder, out = setup
+    routes = [dict(r, category=c) for r, c in zip(ROUTES, ["OPEX", "OPEX", "Revenue"])]
+    monkeypatch.setattr(service, "routes_for", lambda cats: [r for r in routes if r["category"] in cats])
+    asked = {}
+
+    def extractor(tableau_workbook_path, worksheet_names, progress=None):
+        asked["names"] = worksheet_names
+        return {}, {name: "skipped in test" for name in worksheet_names}
+
+    result = service.populate_monthly_forecast_from_tableau(
+        forecast_folder=out, tableau_workbook_path=source, fiscal_year="FY27",
+        forecast_month=10, forecast_year=2026, categories=["Revenue"],
+        opener=lambda **k: None, waiter=lambda **k: None, extractor=extractor,
+        closer=lambda path: {"closed": True},
+    )
+    assert asked["names"] == ["ALIV HR"]
+    assert result["routes_processed"] == 1
+    assert result["audit_workbook"].endswith("Tableau_Forecast_Extract_2026-10_Revenue.xlsx")
+
+
+def test_validation_runs_selected_categories_and_merges_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "get_forecast_validation_output_folder", lambda **k: tmp_path / "report")
+    seen = []
+
+    def runner(routes, **kwargs):
+        seen.append(sorted({r["category"] for r in routes}))
+        return {"results": [dict(category=r["category"], status="PASS", forecast_workbook=r["workbook"],
+                                 worksheet=r["excel_sheet"]) for r in routes]}
+
+    first = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["Revenue"], runner=runner)
+    second = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["SAC"], runner=runner)
+    assert seen == [["Revenue"], ["SAC"]]
+    assert first["validation_report"] == second["validation_report"]
+    wb = load_workbook(second["validation_report"])
+    categories = {row[0] for row in wb["Validation Detail"].iter_rows(min_row=2, values_only=True)}
+    wb.close()
+    assert categories == {"Revenue", "SAC"}

@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox
 
 import ttkbootstrap as tb
 
+from automations.forecast.mapping import FORECAST_CATEGORIES, routes_for
 from automations.forecast.service import (
     build_forecast_period,
     fiscal_year_for,
@@ -18,6 +19,8 @@ from automations.forecast.service import (
     validate_monthly_forecast,
 )
 from shared.forecast_output_paths import get_forecast_validation_output_folder
+from shared.forecast_validation_report import counts as result_counts
+from shared.forecast_validation_report import load_saved_results, report_path_for
 from shared.friendly_errors import explain, friendly
 from ui.common import confirm_close_tableau, get_attention
 
@@ -81,6 +84,12 @@ class ForecastRefreshView(tb.Frame):
 
         self._busy = False
         self._report_path: Path | None = None
+        self._step_buttons: list = []
+        # Per category: (step 2 status, step 3 status)
+        self._category_vars = {
+            name: (tb.StringVar(value="—"), tb.StringVar(value="—"))
+            for name in (*FORECAST_CATEGORIES, "All")
+        }
 
         self._build_view()
         self._on_period_changed()
@@ -184,21 +193,51 @@ class ForecastRefreshView(tb.Frame):
         )
         self.prepare_button.pack(fill="x", pady=(0, 5), ipady=2)
 
-        self.populate_button = tb.Button(
-            panel,
-            text="2.  Update Workbooks from Tableau",
-            bootstyle="info",
-            command=self._start_population,
-        )
-        self.populate_button.pack(fill="x", pady=(0, 5), ipady=2)
+        self._step_buttons.append(self.prepare_button)
+        self._build_category_grid(panel)
 
-        self.validate_button = tb.Button(
-            panel,
-            text="3.  Validate Final Forecast",
-            bootstyle="primary",
-            command=self._start_validation,
-        )
-        self.validate_button.pack(fill="x", ipady=2)
+    def _build_category_grid(self, panel) -> None:
+        """Steps 2 and 3 per category, like the Actuals page."""
+        grid = tb.Frame(panel)
+        grid.pack(fill="x", pady=(8, 0))
+        for col, weight in enumerate((0, 0, 1, 0, 1)):
+            grid.columnconfigure(col, weight=weight)
+
+        headers = ("Category", "2. Update from Tableau", "", "3. Validate", "")
+        for col, text in enumerate(headers):
+            if text:
+                tb.Label(grid, text=text, font=("Segoe UI", 9, "bold")).grid(
+                    row=0, column=col, columnspan=2 if col else 1, sticky="w", pady=(0, 4)
+                )
+
+        rows = [(name, len(routes_for([name]))) for name in FORECAST_CATEGORIES]
+        rows.append(("All", len(routes_for())))
+        row = 0
+        for name, count in rows:
+            row += 1
+            if name == "All":
+                tb.Separator(grid).grid(row=row, column=0, columnspan=5, sticky="ew", pady=4)
+                row += 1
+            label = "All categories" if name == "All" else name
+            tb.Label(grid, text=f"{label} ({count})", font=("Segoe UI", 9, "bold" if name == "All" else "normal")).grid(
+                row=row, column=0, sticky="w", padx=(0, 8), pady=2
+            )
+            categories = None if name == "All" else [name]
+            update_var, validate_var = self._category_vars[name]
+            for col, (text, style, command, variable) in enumerate(
+                (
+                    ("Update", "info-outline" if categories else "info",
+                     lambda c=categories: self._start_population(c), update_var),
+                    ("Validate", "primary-outline" if categories else "primary",
+                     lambda c=categories: self._start_validation(c), validate_var),
+                )
+            ):
+                button = tb.Button(grid, text=text, bootstyle=style, command=command, width=9)
+                button.grid(row=row, column=1 + col * 2, sticky="w", pady=2)
+                self._step_buttons.append(button)
+                tb.Label(grid, textvariable=variable, bootstyle="secondary", wraplength=170, justify="left").grid(
+                    row=row, column=2 + col * 2, sticky="w", padx=(6, 10), pady=2
+                )
 
     def _build_status_panel(self, parent) -> None:
         panel = tb.Labelframe(parent, text="Process Status", padding=14)
@@ -382,7 +421,71 @@ class ForecastRefreshView(tb.Frame):
         self.output_var.set(self.output_folder_var.get().strip() or "Not created yet")
         self._report_path = None
         self.open_validation_button.configure(state="disabled")
+        for update_var, validate_var in self._category_vars.values():
+            update_var.set("—")
+            validate_var.set("—")
         self._update_validation_output()
+        self._load_saved_validation()
+
+    def _load_saved_validation(self) -> None:
+        """Show what was already validated this month, so people can pick up where they left off."""
+        try:
+            period = self._period()
+            folder = get_forecast_validation_output_folder(
+                fiscal_year=period["fiscal_year"],
+                forecast_month=period["forecast_month"],
+                forecast_year=period["forecast_year"],
+                create=False,
+            )
+            saved = load_saved_results(folder, period["forecast_month"], period["forecast_year"], period["forecast_type"])
+        except Exception:
+            log.debug("No saved forecast validation results", exc_info=True)
+            return
+        if saved:
+            self._show_validation_status(saved)
+            report = report_path_for(folder, period["forecast_month"], period["forecast_year"])
+            if report.is_file():
+                self._report_path = report
+                self.open_validation_button.configure(state="normal")
+
+    @staticmethod
+    def _summary_text(results: list[dict]) -> str:
+        c = result_counts(results)
+        parts = [f"{c['PASS']} pass"]
+        for key, label in (("FAIL", "fail"), ("ACTION REQUIRED", "action")):
+            if c[key]:
+                parts.append(f"{c[key]} {label}")
+        if c["NOT VALIDATED"] - c["NOT SET UP"]:
+            parts.append(f"{c['NOT VALIDATED'] - c['NOT SET UP']} not validated")
+        if c["NOT SET UP"]:
+            parts.append(f"{c['NOT SET UP']} not set up")
+        return " · ".join(parts)
+
+    def _show_validation_status(self, by_category: dict) -> None:
+        everything = []
+        for name, entry in by_category.items():
+            if name not in self._category_vars:
+                continue
+            results = entry.get("results", [])
+            everything.extend(results)
+            when = entry.get("validated_at") or ""
+            when = f"{when[5:]}: " if len(when) >= 16 else ""  # "MM-DD HH:MM: "
+            self._category_vars[name][1].set(when + self._summary_text(results))
+        if len(by_category) > 1 or set(by_category) >= set(FORECAST_CATEGORIES):
+            self._category_vars["All"][1].set(self._summary_text(everything) if everything else "—")
+
+    def _show_update_status(self, result: dict) -> None:
+        names = result.get("categories") or FORECAST_CATEGORIES
+        for name in names:
+            passed = sum(item.get("category") == name for item in result["passed"])
+            failed = sum(item.get("category") == name for item in result["failed"])
+            text = f"{passed} updated" + (f" · {failed} not updated" if failed else "")
+            self._category_vars[name][0].set(text if passed or failed else "—")
+        if set(names) >= set(FORECAST_CATEGORIES):
+            self._category_vars["All"][0].set(
+                f"{result['routes_passed']} updated"
+                + (f" · {result['routes_failed']} not updated" if result["routes_failed"] else "")
+            )
 
     def _update_validation_output(self) -> None:
         try:
@@ -486,12 +589,7 @@ class ForecastRefreshView(tb.Frame):
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         state = "disabled" if busy else "normal"
-        for widget in (
-            self.prepare_button,
-            self.populate_button,
-            self.validate_button,
-            self.reset_button,
-        ):
+        for widget in (*self._step_buttons, self.reset_button):
             widget.configure(state=state)
         # The period cannot change under a running step.
         combo_state = "disabled" if busy else "readonly"
@@ -595,16 +693,22 @@ class ForecastRefreshView(tb.Frame):
     # STEP 2 - CONSOLIDATED TABLEAU -> EXCEL
     # =========================================================
 
-    def _start_population(self) -> None:
+    @staticmethod
+    def _describe(categories) -> str:
+        return "all categories" if not categories else ", ".join(categories)
+
+    def _start_population(self, categories=None) -> None:
         inputs = self._collect_inputs(output_exists=True, tableau=True)
         if inputs is None:
             return
+        inputs["categories"] = categories
         period = inputs["period"]
 
         if not messagebox.askyesno(
             "Update Workbooks from Tableau",
             (
-                f"Update the {period['display']} workbooks from Tableau?\n\n"
+                f"Update the {period['display']} workbooks for "
+                f"{self._describe(categories)} from Tableau?\n\n"
                 f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
                 f"Forecast Type: {period['forecast_type']}\n\n"
                 "The app opens a temporary copy of the consolidated workbook, "
@@ -617,8 +721,10 @@ class ForecastRefreshView(tb.Frame):
         if not confirm_close_tableau(self):
             return
 
-        self.status_var.set("Updating from Tableau")
+        self.status_var.set(f"Updating {self._describe(categories)}")
         self.status_description_var.set("Opening the consolidated Tableau workbook...")
+        for name in categories or (*FORECAST_CATEGORIES, "All"):
+            self._category_vars[name][0].set("Running…")
         self.progress_var.set(35)
         self._start_worker(self._run_population, inputs)
 
@@ -631,6 +737,7 @@ class ForecastRefreshView(tb.Frame):
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
+                categories=inputs["categories"],
                 progress=self._progress_reporter(35, 66, "Copying crosstab"),
             )
             self._post(self._population_complete, result)
@@ -645,6 +752,7 @@ class ForecastRefreshView(tb.Frame):
         self.worksheets_updated_var.set(str(result["worksheets_updated"]))
         self.files_created_var.set(str(result["workbooks_updated"]))
         self.progress_var.set(66)
+        self._show_update_status(result)
 
         if failed:
             self.status_var.set("Updated with Exceptions")
@@ -662,11 +770,11 @@ class ForecastRefreshView(tb.Frame):
         else:
             self.status_var.set("Forecast Workbooks Updated")
             self.status_description_var.set(
-                f"All {result['routes_passed']} sheets were updated. Next: 3. Validate Final Forecast."
+                f"All {result['routes_passed']} sheets were updated. Next: Validate."
             )
             message = (
                 f"{result['workbooks_updated']} workbooks and {result['worksheets_updated']} "
-                "sheets were updated.\n\nNext: click 3. Validate Final Forecast."
+                "sheets were updated.\n\nNext: click Validate for the same category."
             )
         if result.get("close_warning"):
             message += f"\n\nTableau could not be closed automatically: {result['close_warning']}"
@@ -679,16 +787,18 @@ class ForecastRefreshView(tb.Frame):
     # STEP 3 - INDIVIDUAL TABLEAU VALIDATION
     # =========================================================
 
-    def _start_validation(self) -> None:
+    def _start_validation(self, categories=None) -> None:
         inputs = self._collect_inputs(output_exists=True)
         if inputs is None:
             return
+        inputs["categories"] = categories
         period = inputs["period"]
 
         if not messagebox.askyesno(
             "Validate Final Forecast",
             (
-                f"Validate the completed {period['display']} forecast?\n\n"
+                f"Validate the {period['display']} forecast for "
+                f"{self._describe(categories)}?\n\n"
                 "Each individual Tableau workbook is opened as a temporary copy "
                 f"set to Forecast Type {period['forecast_type']}. A route that "
                 "can't be checked is marked in the report and the run continues."
@@ -699,7 +809,9 @@ class ForecastRefreshView(tb.Frame):
         if not confirm_close_tableau(self):
             return
 
-        self.status_var.set("Validating Final Forecast")
+        self.status_var.set(f"Validating {self._describe(categories)}")
+        for name in categories or (*FORECAST_CATEGORIES, "All"):
+            self._category_vars[name][1].set("Running…")
         self.status_description_var.set("Comparing Excel Grand Totals to the individual Tableau workbooks.")
         self.progress_var.set(67)
         self._start_worker(self._run_validation, inputs)
@@ -713,6 +825,7 @@ class ForecastRefreshView(tb.Frame):
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
                 tolerance=VALIDATION_TOLERANCE,
+                categories=inputs["categories"],
                 progress=self._progress_reporter(67, 99, "Validating"),
             )
             self._post(self._validation_complete, result)
@@ -725,8 +838,15 @@ class ForecastRefreshView(tb.Frame):
         passed = int(result.get("passed", 0))
         failed = int(result.get("failed", 0))
         action = int(result.get("action_required", 0))
-        not_validated = int(result.get("not_validated", 0))
+        not_set_up = int(result.get("not_configured", 0))
+        # "Not validated" here means a suspect line (e.g. wrong month);
+        # routes not set up for validation yet are reported separately.
+        not_validated = int(result.get("not_validated", 0)) - not_set_up
         clean = not (failed or action or not_validated)
+        self._show_validation_status(
+            {name: {"validated_at": "just now", "results": [r for r in result.get("results", []) if r.get("category") == name]}
+             for name in result.get("categories") or FORECAST_CATEGORIES}
+        )
 
         get_attention(self, success=clean)
         self.validation_passed_var.set(str(passed))
@@ -741,11 +861,16 @@ class ForecastRefreshView(tb.Frame):
             self.validation_output_var.set(report_path)
             self.open_validation_button.configure(state="normal")
 
+        ran = result.get("categories") or list(FORECAST_CATEGORIES)
+        scope = "Forecast" if set(ran) >= set(FORECAST_CATEGORIES) else ", ".join(ran)
         if clean:
-            self.status_var.set("Forecast Reconciled")
-            self.status_description_var.set(f"All {passed} routes reconciled within ${VALIDATION_TOLERANCE:,.2f}.")
+            self.status_var.set(f"{scope} Reconciled")
+            self.status_description_var.set(
+                f"All {passed} validated routes reconciled within ${VALIDATION_TOLERANCE:,.2f}"
+                + (f"; {not_set_up} routes are not set up for validation yet." if not_set_up else ".")
+            )
         else:
-            self.status_var.set("Validation Review Required")
+            self.status_var.set(f"{scope}: Review Required")
             self.status_description_var.set(
                 f"{passed} passed, {failed} failed, {action} action required, {not_validated} not validated."
             )
@@ -755,10 +880,12 @@ class ForecastRefreshView(tb.Frame):
             f"Passed: {passed}\n"
             f"Failed: {failed}\n"
             f"Action Required: {action}\n"
-            f"Not Validated: {not_validated}"
+            f"Not Validated: {not_validated}\n"
+            f"Not set up for validation yet: {not_set_up}"
         )
         problems = [
-            item for item in result.get("results", []) if item.get("status") in ("ACTION REQUIRED", "NOT VALIDATED")
+            item for item in result.get("results", [])
+            if item.get("status") in ("FAIL", "ACTION REQUIRED", "NOT VALIDATED") and not item.get("not_configured")
         ]
         if problems:
             message += "\n\nFirst items to review:\n" + "\n".join(
@@ -785,6 +912,10 @@ class ForecastRefreshView(tb.Frame):
 
     def _process_failed(self, error: Exception) -> None:
         self._set_busy(False)
+        for update_var, validate_var in self._category_vars.values():
+            for variable in (update_var, validate_var):
+                if variable.get() == "Running…":
+                    variable.set("Stopped – see message")
         get_attention(self, success=False)
         self.progress_var.set(0)
         self.status_var.set("Process Failed")

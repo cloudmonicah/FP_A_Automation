@@ -1003,15 +1003,17 @@ def run_grouped_individual_validation(
         tab = route.get("individual_tableau_worksheet")
 
         if route.get("validation_status") != "confirmed":
+            note = route.get("validation_filter_note")
             results.append(
                 _route_row(
                     route,
                     target_month_abbr,
                     "NOT VALIDATED",
-                    route.get("validation_filter_note")
-                    or "This route is not set up for automated validation yet.",
+                    "Not set up for automated validation yet"
+                    + (f" (needs a filter: {note})." if note else "."),
                 )
             )
+            results[-1]["not_configured"] = True
             continue
 
         if not folder or not workbook or not tab:
@@ -1024,6 +1026,7 @@ def run_grouped_individual_validation(
                     "the forecast mapping.",
                 )
             )
+            results[-1]["not_configured"] = True
             continue
 
         # Check the Excel side first: a wrong-month or suspect workbook is
@@ -1155,6 +1158,10 @@ def run_grouped_individual_validation(
 
             workbook_results.append(workbook_record)
 
+    # Exactly one result per selected route, in order.
+    for route, result in zip(selected, results):
+        result["category"] = route.get("category", "")
+
     if progress:
         progress(total, total, "Validation finished")
 
@@ -1168,6 +1175,7 @@ def summarize_results(results: list[dict], workbook_results: list[dict] | None =
     }
     return {
         "results": results,
+        "not_configured": sum(bool(item.get("not_configured")) for item in results),
         "workbooks": workbook_results or [],
         "passed": counts["PASS"],
         "failed": counts["FAIL"],
