@@ -2631,34 +2631,43 @@ def extract_forecast_worksheets(
     results: dict[str, list[dict]] = {}
     errors: dict[str, str] = {}
 
+    def recover() -> None:
+        # Close menus and never reuse the clipboard from a previous worksheet.
+        try:
+            _clear_clipboard()
+            window = _get_tableau_window(tableau_workbook_path=workbook_path)
+            _force_tableau_to_foreground(window)
+            window.type_keys("{ESC}{ESC}{ESC}")
+        except Exception as recovery_exc:
+            print(f"[TABLEAU RECOVERY] {recovery_exc}")
+
     for sequence_number, worksheet_name in enumerate(unique_names, start=1):
         if progress:
             progress(sequence_number - 1, len(unique_names), worksheet_name)
-        try:
-            rows = get_tableau_crosstab_rows(
-                worksheet_name=worksheet_name,
-                raw_output_folder=raw_output_folder,
-                sequence_number=sequence_number,
-                tableau_workbook_path=workbook_path,
-            )
-            if not rows:
-                raise RuntimeError("Tableau returned an empty crosstab")
-            results[worksheet_name] = rows
-        except Exception as exc:
-            errors[worksheet_name] = f"{type(exc).__name__}: {exc}"
-            print(
-                f"[TABLEAU EXTRACT FAILED] {worksheet_name}: {errors[worksheet_name]}"
-            )
-            # Recover menu state before selecting the next worksheet.
-            # Never reuse the clipboard from a previous worksheet.
+        # A large tab can still be calculating when its menus are opened, so
+        # the Copy submenu never appears. One more full try - wait, select
+        # the tab again, copy again - fixes that without failing the route.
+        for attempt in (1, 2):
             try:
-                _clear_clipboard()
-                window = _get_tableau_window(tableau_workbook_path=workbook_path)
-                _force_tableau_to_foreground(window)
-                window.type_keys("{ESC}{ESC}{ESC}")
-            except Exception as recovery_exc:
-                print(f"[TABLEAU RECOVERY] {recovery_exc}")
-            time.sleep(1)
+                rows = get_tableau_crosstab_rows(
+                    worksheet_name=worksheet_name,
+                    raw_output_folder=raw_output_folder,
+                    sequence_number=sequence_number,
+                    tableau_workbook_path=workbook_path,
+                )
+                if not rows:
+                    raise RuntimeError("Tableau returned an empty crosstab")
+                results[worksheet_name] = rows
+                errors.pop(worksheet_name, None)
+                break
+            except Exception as exc:
+                errors[worksheet_name] = f"{type(exc).__name__}: {exc}"
+                print(
+                    f"[TABLEAU EXTRACT FAILED] {worksheet_name} "
+                    f"(try {attempt}/2): {errors[worksheet_name]}"
+                )
+                recover()
+                time.sleep(10 if attempt == 1 else 1)
 
     # Return failures explicitly to the caller without pretending the
     # failed worksheet was successfully extracted.
