@@ -1125,9 +1125,8 @@ class ActualsValidationView(tb.Frame):
         try:
             folder.mkdir(parents=True, exist_ok=True)
             for basis in ("MONTH", "YTD"):
-                from shared.tableau_temp_copies import temp_twb_path
-
-                temporary = temp_twb_path(source, "Revenue_GUI")
+                # Work directly on the source workbook: set the filters, save it.
+                temporary = Path(source)
                 opened = False
                 try:
                     prepare_revenue_copy(source, temporary, [worksheet], period, basis)
@@ -1156,7 +1155,6 @@ class ActualsValidationView(tb.Frame):
                         except Exception as exc:
                             log.exception("Error in %s", type(self).__name__)
                             print(f"[REVENUE GUI] Close warning: {exc}", flush=True)
-                    temporary.unlink(missing_ok=True)
             self.after(0, self._revenue_live_test_finished, str(folder), None)
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
@@ -1287,6 +1285,12 @@ class ActualsValidationView(tb.Frame):
                     "corporate": str(
                         group_path.parent / "Cable Bahamas Group_CORPORATE REVENUE.twb"
                     ),
+                    "finance": str(
+                        group_path.parent / "CBL Group Revenue_Finance View.twb"
+                    ),
+                    "media": str(
+                        group_path.parent / "Cable Bahamas Group_MEDIA REVENUE.twb"
+                    ),
                 }
                 result = run_live_revenue_validation(
                     aliv_fs_path=aliv_fs_path,
@@ -1306,11 +1310,22 @@ class ActualsValidationView(tb.Frame):
             )
 
             source = Path(result["validation_workbook"])
+            # Revenue reports the values it actually set in Tableau.
             result["final_report"] = finalize_actuals_report_in_place(
                 source,
-                forecast_type=self.selected_tableau_settings.get("forecast_type"),
-                forecast_start=self.selected_tableau_settings.get("forecast_start"),
+                forecast_type=result.get("forecast_type")
+                or self.selected_tableau_settings.get("forecast_type"),
+                forecast_start=result.get("forecast_start")
+                or self.selected_tableau_settings.get("forecast_start"),
             )
+            if category == "Revenue":
+                from automations.actuals.report_builder import add_run_notes_sheet
+
+                add_run_notes_sheet(
+                    result["final_report"],
+                    filters=result.get("filters_used", []),
+                    notes=result.get("capture_notes", []),
+                )
             if category == "Direct Cost":
                 from automations.actuals.direct_cost_individual_merge import (
                     merge_direct_cost_crosstabs,

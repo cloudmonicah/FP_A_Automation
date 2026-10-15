@@ -35,7 +35,12 @@ def extract_monthly_ytd(raw_path, company, closed_period, fiscal_start_month=7):
         periods,measures=rows[:2]
         data_rows=rows[2:]
     if len(periods)!=len(measures): raise ValueError("Misaligned Tableau crosstab headers")
-    if measures[0].casefold()!="company": raise ValueError("Missing Company header")
+    has_company = measures[0].casefold()=="company"
+    if not has_company and rows[0][0].casefold()=="company":
+        has_company = True
+    if not has_company:
+        # Tabs without a Company column (e.g. Head Office): use their one Grand Total row.
+        pass
     actual_cols={}; grand=[]
     for i,(period,measure) in enumerate(zip(periods,measures)):
         if measure.casefold().strip() not in ("actual ytd","actual"):
@@ -57,6 +62,17 @@ def extract_monthly_ytd(raw_path, company, closed_period, fiscal_start_month=7):
     if len(grand)!=1: raise ValueError("Expected one Grand Total Actual YTD column")
     company_rows=[]
     grand_rows=[]
+    if not has_company:
+        grand_rows=[r+[""]*(len(periods)-len(r)) for r in data_rows if r and r[0].casefold()=="grand total"]
+        if len(grand_rows)!=1:
+            raise ValueError(f"Expected one Grand Total row on a tab without a Company column; found {len(grand_rows)}")
+        row=grand_rows[0]
+        monthly=_number(row[actual_cols[selected]])
+        calculated=sum((_number(row[actual_cols[k]]) for k in expected),Decimal(0))
+        total=_number(row[grand[0]])
+        difference=abs(calculated-total)
+        if difference>Decimal(2): raise ValueError(f"YTD does not reconcile: months={calculated} total={total}")
+        return {"MONTH":monthly,"YTD":total,"YTD_CHECK":calculated,"YTD_DIFFERENCE":difference}
     for row in data_rows:
         row=row+[""]*(len(periods)-len(row))
         if row[0].casefold()=="grand total":
