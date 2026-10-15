@@ -12,6 +12,10 @@ import re
 _RULES: list[tuple[re.Pattern, object]] = []
 
 
+class PlainLanguageError(Exception):
+    """An error whose message was written for the user; shown as is."""
+
+
 def _rule(pattern, message):
     _RULES.append((re.compile(pattern, re.I | re.S), message))
 
@@ -20,6 +24,25 @@ def _quoted(text):
     found = re.search(r'"([^"]+)"', text)
     return found.group(1) if found else None
 
+
+# --- Monthly Forecast, step 1 ----------------------------------------------
+_rule(
+    r"July is the initial fiscal-year forecast month",
+    "July starts the fiscal year, so its forecast is created with Initial Budget "
+    "Setup, not on this page. Pick another month.",
+)
+_rule(
+    r"No valid (?P<fy>FY\d\d) forecast workbooks were found before (?P<m>\w+) in (?P<p>.+)",
+    lambda m, t: (
+        f"No {m.group('fy')} forecast workbooks from before {m.group('m')} were found "
+        f"in the Previous Forecast Folder ({m.group('p').strip()}). Check the folder, "
+        'and that file names look like "FY27 OPEX Legal_Sep Forecast.xlsx".'
+    ),
+)
+_rule(
+    r"Forecast source folder not found: (?P<p>.+)",
+    lambda m, t: f"The Previous Forecast Folder was not found: {m.group('p').strip()}",
+)
 
 # --- Tableau ---------------------------------------------------------------
 _rule(
@@ -166,6 +189,8 @@ GENERIC = (
 def friendly(error, context: str = "") -> str:
     """Plain-language explanation for an exception or an error string."""
     text = str(error or "").strip()
+    if isinstance(error, PlainLanguageError):
+        return f"{context}: {text}" if context else text
     name = type(error).__name__ if isinstance(error, BaseException) else ""
     haystack = f"{name} {text}"
     for pattern, message in _RULES:

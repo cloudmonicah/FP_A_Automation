@@ -1,5 +1,5 @@
 from __future__ import annotations
-from shared.friendly_errors import explain
+from shared.friendly_errors import PlainLanguageError, explain
 
 from pathlib import Path
 from typing import Any
@@ -438,6 +438,10 @@ def compare_formula_preservation(
 # ============================================================
 
 
+class ForecastFilesExistError(PlainLanguageError, FileExistsError):
+    """Existing Files = cancel and some of the month's files already exist."""
+
+
 def create_forecast_refresh(
     source_folder: str | Path,
     output_folder: str | Path,
@@ -489,6 +493,24 @@ def create_forecast_refresh(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
     )
+
+    # "cancel" means: change nothing if any of this month's files already
+    # exist. Check them all before copying the first one.
+    if overwrite_mode == "cancel":
+        existing = [
+            output_path / f"{info['family']}_{target_month_abbr} Forecast{info['file'].suffix}"
+            for info in selected_workbooks
+        ]
+        existing = [path.name for path in existing if path.exists()]
+        if existing:
+            shown = "\n".join(f"  - {name}" for name in existing[:10])
+            more = f"\n  ...and {len(existing) - 10} more" if len(existing) > 10 else ""
+            raise ForecastFilesExistError(
+                f"{len(existing)} of this month's forecast files already exist in "
+                f"the output folder, so nothing was created (Existing Files = "
+                f'"cancel"):\n\n{shown}{more}\n\nChoose "skip" to keep them or '
+                '"replace" to recreate them.'
+            )
 
     created: list[Path] = []
     skipped: list[Path] = []
