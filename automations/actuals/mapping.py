@@ -364,16 +364,13 @@ INDIVIDUAL_DIRECT_COST_MAPPINGS = [
     {
         "company": "ALIV",
         "fs_line": "Reseller Commissions",
-        "individual_tableau_workbook": rf"{_DC_FOLDER}\Cable Bahamas Group Direct Costs_Engineering.twb",
-        "individual_tableau_worksheet": "ALIV Group Direct Costs Details",
-        "tableau_categories": [
-            "COMMISSIONS - PUSH TO TALK",
-            "COMMISSIONS - RECAHRAGE DEALERS",
-            "COMMISSIONS - KIOSKS",
-            "COMISSIONS - BTS RECHARGE",
-            "COMMISSIONS - OTHER SERVICE COMMISSIONS & BANK CHA",
-        ],
-        "aggregation": AGG_SUM,
+        "individual_tableau_workbook": rf"{_DC_FOLDER}\Cable Bahamas Group Direct Costs_Consumer Sales.twb",
+        "individual_tableau_worksheet": "ALIV Reseller Group Direct Costs Details",
+        # This worksheet already holds the Reseller Commissions total, so the
+        # total row is read instead of adding up commission categories.
+        "tableau_categories": [],
+        "aggregation": AGG_TOTAL,
+        "dedicated_total": True,
         "individual_actuals_enabled": True,
     },
     {
@@ -412,6 +409,18 @@ INDIVIDUAL_DIRECT_COST_MAPPINGS = [
         "individual_tableau_worksheet": "CBL Programming Fees - Monthly Budget v Actual",
         "tableau_categories": ["CONTENT FEES"],
         "aggregation": AGG_SUM,
+        "individual_actuals_enabled": True,
+    },
+    {
+        # Media's costs belong in Programming fees, so this capture is added to
+        # that line instead of being reported as a line of its own.
+        "company": "CBL",
+        "fs_line": "Programming fees - Media",
+        "add_to": "Programming fees",
+        "individual_tableau_workbook": rf"{_DC_FOLDER}\CBL Content Fees_Media.twb",
+        "individual_tableau_worksheet": "CBL MEDIA Content Fees - Monthly",
+        "tableau_categories": [],
+        "aggregation": AGG_DIRECT,
         "individual_actuals_enabled": True,
     },
     {

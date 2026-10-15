@@ -804,6 +804,19 @@ def run_live_revenue_validation(
             finally:
                 if opened:
                     closer(tableau_workbook_path=str(source))
+    # The Corporate sheet's Total also contains Government, which is reported on
+    # its own line, so take it out of Corporate - Recurring to avoid counting it twice.
+    for basis in ("MONTH", "YTD"):
+        group = values[basis]["CBL"]
+        detail = individual_values[basis]["CBL"]
+        government = group.get("Government")
+        if government is None:
+            government = detail.get("Government")
+        if government is None:
+            continue
+        for bucket in (group, detail):
+            if bucket.get("Corporate - Recurring") is not None:
+                bucket["Corporate - Recurring"] -= government
     print("Revenue: all Tableau captures finished; preparing comparisons.", flush=True)
     for basis in ("MONTH", "YTD"):
         for company in ("ALIV", "CBL"):
