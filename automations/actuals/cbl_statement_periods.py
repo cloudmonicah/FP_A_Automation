@@ -195,6 +195,17 @@ def read_cbl_area(workbook_path, area, closed_period=None):
             ytd["Cost of Goods Sold"] = amount(totals[0][15], "YTD Total COGS")
         if not ytd:
             raise ValueError(f"No CBL {area} statement values found.")
+        if area == "OPEX":
+            # The statement names these lines differently from the report / Tableau.
+            aliases = {
+                "Contact Center": "Customer Experience & Contact Center",
+                "MD Media": "Media",
+                "Total Operating Costs": "Total Opex",
+            }
+            for source_name, report_name in aliases.items():
+                for values in (monthly, ytd):
+                    if source_name in values and report_name not in values:
+                        values[report_name] = values[source_name]
         return {
             "MONTH": monthly,
             "YTD": ytd,
