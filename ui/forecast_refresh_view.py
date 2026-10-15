@@ -422,7 +422,22 @@ class ForecastRefreshView(tb.Frame):
             forecast_year=int(self.forecast_year_combo.get()),
         )
 
+    @staticmethod
+    def _fiscal_year_for(month: int, year: int) -> str:
+        """July-June fiscal year: July 2026 .. June 2027 -> FY27."""
+        return f"FY{(year + 1 if month >= 7 else year) % 100:02d}"
+
     def _update_period_summary(self, _event=None) -> None:
+        # The fiscal year always follows the month and year, so the two can
+        # never disagree (e.g. FY28 with October 2026).
+        self.fiscal_year_combo.configure(state="normal")
+        self.fiscal_year_combo.set(
+            self._fiscal_year_for(
+                MONTH_LOOKUP[self.forecast_month_combo.get()],
+                int(self.forecast_year_combo.get()),
+            )
+        )
+        self.fiscal_year_combo.configure(state="disabled")
         period = self._period()
         self.period_summary_var.set(
             f"Selected Period: {period['display']}\n"
@@ -468,11 +483,15 @@ class ForecastRefreshView(tb.Frame):
     # =========================================================
 
     def _validate_inputs(self) -> bool:
-        source = Path(self.source_folder_var.get().strip())
-        output = Path(self.output_folder_var.get().strip())
-        tableau = Path(self.tableau_workbook_var.get().strip())
+        source_text = self.source_folder_var.get().strip()
+        output_text = self.output_folder_var.get().strip()
+        tableau_text = self.tableau_workbook_var.get().strip()
+        # Path("") is ".", which always "exists" - check the text first.
+        source = Path(source_text)
+        output = Path(output_text)
+        tableau = Path(tableau_text)
 
-        if not str(source) or not source.exists():
+        if not source_text or not source.is_dir():
             messagebox.showerror(
                 "Previous Forecast Folder",
                 "Select a valid previous forecast folder.",
@@ -480,7 +499,7 @@ class ForecastRefreshView(tb.Frame):
             )
             return False
 
-        if not str(output):
+        if not output_text:
             messagebox.showerror(
                 "Forecast Output Folder",
                 "Select a forecast output folder.",
@@ -488,9 +507,7 @@ class ForecastRefreshView(tb.Frame):
             )
             return False
 
-        output.mkdir(parents=True, exist_ok=True)
-
-        if not tableau.exists() or tableau.suffix.lower() != ".twb":
+        if not tableau_text or not tableau.is_file() or tableau.suffix.lower() != ".twb":
             messagebox.showerror(
                 "Tableau Forecast Workbook",
                 "Select the FY Forecast Tableau .twb workbook.",
@@ -498,6 +515,15 @@ class ForecastRefreshView(tb.Frame):
             )
             return False
 
+        if output.resolve() == source.resolve() and not messagebox.askyesno(
+            "Forecast Output Folder",
+            "The output folder is the same as the Previous Forecast Folder, so the "
+            "new workbooks will be created next to last month's. Continue?",
+            parent=self.winfo_toplevel(),
+        ):
+            return False
+
+        output.mkdir(parents=True, exist_ok=True)
         return True
 
     def _set_busy(self, busy: bool) -> None:
@@ -533,6 +559,16 @@ class ForecastRefreshView(tb.Frame):
         if not confirm_close_tableau(self):
             return
 
+        # Read everything here, on the UI thread. The worker thread must not
+        # touch Tk (that is what caused the "Tcl_AsyncDelete" crash).
+        inputs = {
+            "period": period,
+            "source_folder": self.source_folder_var.get().strip(),
+            "output_folder": self.output_folder_var.get().strip(),
+            "tableau_workbook": self.tableau_workbook_var.get().strip(),
+            "overwrite_mode": self.overwrite_var.get(),
+        }
+
         self._set_busy(True)
         self.status_var.set("Preparing Monthly Forecast")
         self.status_description_var.set(
@@ -543,20 +579,21 @@ class ForecastRefreshView(tb.Frame):
 
         threading.Thread(
             target=self._run_prepare,
+            args=(inputs,),
             daemon=True,
         ).start()
 
-    def _run_prepare(self) -> None:
+    def _run_prepare(self, inputs: dict) -> None:
         try:
-            period = self._period()
+            period = inputs["period"]
             result = prepare_monthly_forecast(
-                source_folder=self.source_folder_var.get().strip(),
-                output_folder=self.output_folder_var.get().strip(),
-                tableau_workbook_path=self.tableau_workbook_var.get().strip(),
+                source_folder=inputs["source_folder"],
+                output_folder=inputs["output_folder"],
+                tableau_workbook_path=inputs["tableau_workbook"],
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
-                overwrite_mode=self.overwrite_var.get(),
+                overwrite_mode=inputs["overwrite_mode"],
                 open_tableau=True,
             )
             self.after(0, lambda r=result: self._prepare_complete(r))
@@ -586,15 +623,41 @@ class ForecastRefreshView(tb.Frame):
         self.populate_button.configure(state="normal")
         self.validate_button.configure(state="normal")
 
-        messagebox.showinfo(
-            "Tableau Opened",
-            (
-                f"{period['display']} forecast workbooks were created.\n\n"
-                f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
-                f"Forecast Type: {period['forecast_type']}\n\n"
-                "Wait for Tableau to finish loading/refeshing, then click:\n\n"
-                "2  Update Workbooks from Tableau"
-            ),
+        failures = excel.get("failures") or []
+        skipped = excel.get("skipped_files") or []
+        older = excel.get("older_sources") or []
+
+        lines = [
+            f"{period['display']} forecast workbooks:",
+            f"  Created: {excel.get('files_created', 0)}",
+            f"  Kept (already existed): {len(skipped)}",
+            f"  Failed: {len(failures)}",
+        ]
+        if failures:
+            lines += ["", "These could not be created:"]
+            lines += [f"  - {item['file']}: {item['error']}" for item in failures[:8]]
+            if len(failures) > 8:
+                lines.append(f"  ...and {len(failures) - 8} more (see the log).")
+        if skipped:
+            lines += [
+                "",
+                "Existing files were kept as they are (Existing Files = \"skip\"). "
+                "Choose \"replace\" to recreate them.",
+            ]
+        if older:
+            lines += ["", f"No {excel.get('expected_source_month')} file was found for these, so an older month was used:"]
+            lines += [f"  - {item['family']} ({item['source_month']})" for item in older[:8]]
+        lines += [
+            "",
+            f"Forecast Start: {period['forecast_start']:%m/%d/%Y}",
+            f"Forecast Type: {period['forecast_type']}",
+            "",
+            "Tableau is opening. Wait for it to finish loading and refreshing, then click:",
+            "2.  Update Workbooks from Tableau",
+        ]
+        (messagebox.showwarning if failures or older else messagebox.showinfo)(
+            "Forecast Workbooks Created",
+            "\n".join(lines),
             parent=self.winfo_toplevel(),
         )
 
@@ -819,6 +882,8 @@ class ForecastRefreshView(tb.Frame):
         self.status_var.set("Process Failed")
         self.status_description_var.set(explain(error))
         self.prepare_button.configure(state="normal")
+        self.populate_button.configure(state="normal")
+        self.validate_button.configure(state="normal")
 
         messagebox.showerror(
             "Monthly Forecast Automation",
