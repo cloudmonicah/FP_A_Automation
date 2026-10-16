@@ -85,7 +85,7 @@ class ForecastRefreshView(tb.Frame):
         tb.Label(
             self,
             text="Monthly Forecast Automation",
-            font=("Segoe UI", 22, "bold"),
+            font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w")
 
         tb.Label(
@@ -96,73 +96,74 @@ class ForecastRefreshView(tb.Frame):
             ),
             font=("Segoe UI", 10),
             bootstyle="secondary",
-        ).pack(anchor="w", pady=(3, 10))
+        ).pack(anchor="w", pady=(2, 8))
 
-        content = tb.Frame(self)
+        # Scrolls on small or zoomed-in screens so nothing is ever cut off.
+        try:
+            from ttkbootstrap.scrolled import ScrolledFrame
+
+            content = ScrolledFrame(self, autohide=True)
+        except Exception:
+            content = tb.Frame(self)
         content.pack(fill="both", expand=True)
 
-        # 60% Forecast Parameters / 40% Process Status
+        # 60% parameters and steps / 40% process status
         content.columnconfigure(0, weight=3, uniform="panels")
         content.columnconfigure(1, weight=2, uniform="panels")
         content.rowconfigure(0, weight=1)
 
-        self._build_parameters_panel(content)
+        left = tb.Frame(content)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        self._build_parameters_panel(left)
+        self._build_steps_panel(left)
         self._build_status_panel(content)
 
     def _build_parameters_panel(self, parent) -> None:
+        panel = tb.Labelframe(parent, text="Forecast Parameters", padding=(14, 8))
+        panel.pack(fill="x")
+        panel.columnconfigure(1, weight=1)
 
-        panel = tb.Labelframe(
-            parent,
-            text="Forecast Parameters",
-            padding=14,
-        )
+        # Period: month, year and fiscal year on one row.
+        period = tb.Frame(panel)
+        period.grid(row=0, column=0, columnspan=3, sticky="ew")
+        for col in range(3):
+            period.columnconfigure(col, weight=1, uniform="period")
 
-        panel.grid(
-            row=0,
-            column=0,
-            sticky="nsew",
-            padx=(0, 8),
-        )
+        def field(col, text):
+            tb.Label(period, text=text, font=("Segoe UI", 9, "bold")).grid(
+                row=0, column=col, sticky="w", padx=(0 if col == 0 else 8, 0)
+            )
 
-        self._label(panel, "Fiscal Year")
-        self.fiscal_year_combo = tb.Combobox(
-            panel,
-            values=["FY27", "FY28", "FY29", "FY30"],
-            state="readonly",
-            width=42,
-        )
-        self.fiscal_year_combo.pack(fill="x", pady=(3, 7))
-        self.fiscal_year_combo.set("FY27")
+        field(0, "Forecast Month")
+        field(1, "Forecast Year")
+        field(2, "Fiscal Year")
 
-        self._label(panel, "Forecast Month")
         self.forecast_month_combo = tb.Combobox(
-            panel,
-            values=list(MONTH_LOOKUP),
-            state="readonly",
-            width=32,
+            period, values=list(MONTH_LOOKUP), state="readonly"
         )
-        self.forecast_month_combo.pack(fill="x", pady=(3, 7))
+        self.forecast_month_combo.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         self.forecast_month_combo.set("October")
 
-        self._label(panel, "Forecast Year")
         self.forecast_year_combo = tb.Combobox(
-            panel,
+            period,
             values=["2026", "2027", "2028", "2029", "2030"],
             state="readonly",
-            width=32,
         )
-        self.forecast_year_combo.pack(fill="x", pady=(3, 7))
+        self.forecast_year_combo.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(2, 0))
         self.forecast_year_combo.set("2026")
+
+        self.fiscal_year_combo = tb.Combobox(
+            period, values=["FY27", "FY28", "FY29", "FY30"], state="readonly"
+        )
+        self.fiscal_year_combo.grid(row=1, column=2, sticky="ew", padx=(8, 0), pady=(2, 0))
+        self.fiscal_year_combo.set("FY27")
 
         for combo in (
             self.fiscal_year_combo,
             self.forecast_month_combo,
             self.forecast_year_combo,
         ):
-            combo.bind(
-                "<<ComboboxSelected>>",
-                self._update_period_summary,
-            )
+            combo.bind("<<ComboboxSelected>>", self._update_period_summary)
 
         tb.Label(
             panel,
@@ -170,38 +171,42 @@ class ForecastRefreshView(tb.Frame):
             bootstyle="info",
             font=("Segoe UI", 9, "bold"),
             justify="left",
-        ).pack(anchor="w", pady=(0, 10))
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 8))
 
-        self._path_picker(
-            panel,
-            "Previous Forecast Folder",
-            self.source_folder_var,
-            self._browse_source_folder,
-        )
-        self._path_picker(
-            panel,
-            "Forecast Output Folder",
-            self.output_folder_var,
-            self._browse_output_folder,
-        )
-        self._path_picker(
-            panel,
-            "Tableau Forecast Workbook",
-            self.tableau_workbook_var,
-            self._browse_tableau_workbook,
-        )
+        # Paths: label | box | Browse, one line each.
+        for row, (label, variable, command) in enumerate(
+            (
+                ("Previous Forecast Folder", self.source_folder_var, self._browse_source_folder),
+                ("Forecast Output Folder", self.output_folder_var, self._browse_output_folder),
+                ("Tableau Forecast Workbook", self.tableau_workbook_var, self._browse_tableau_workbook),
+            ),
+            start=2,
+        ):
+            tb.Label(panel, text=label, font=("Segoe UI", 9, "bold")).grid(
+                row=row, column=0, sticky="w", padx=(0, 10), pady=3
+            )
+            tb.Entry(panel, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=3)
+            tb.Button(
+                panel, text="Browse", bootstyle="secondary-outline", command=command
+            ).grid(row=row, column=2, sticky="e", padx=(8, 0), pady=3)
 
-        self._label(panel, "Existing Files")
+        tb.Label(panel, text="Existing Files", font=("Segoe UI", 9, "bold")).grid(
+            row=5, column=0, sticky="w", padx=(0, 10), pady=3
+        )
         overwrite = tb.Combobox(
             panel,
             textvariable=self.overwrite_var,
             values=["skip", "replace", "cancel"],
             state="readonly",
+            width=12,
         )
-        overwrite.pack(fill="x", pady=(5, 16))
+        overwrite.grid(row=5, column=1, sticky="w", pady=3)
         overwrite.set("skip")
 
-        tb.Separator(panel).pack(fill="x", pady=(2, 8))
+    def _build_steps_panel(self, parent) -> None:
+        """Step 1 across the top; steps 2 and 3 as a grid: one column per category."""
+        panel = tb.Labelframe(parent, text="Run", padding=(14, 8))
+        panel.pack(fill="x", pady=(8, 0))
 
         self.prepare_button = tb.Button(
             panel,
@@ -209,71 +214,68 @@ class ForecastRefreshView(tb.Frame):
             bootstyle="success",
             command=self._start_prepare,
         )
-        self.prepare_button.pack(fill="x", pady=(0, 5), ipady=2)
+        self.prepare_button.pack(fill="x", ipady=2)
 
-        # Step 2 runs one category at a time.
-        tb.Label(
-            panel,
-            text="2.  Update Workbooks from Tableau (one category at a time)",
-            font=("Segoe UI", 10, "bold"),
-        ).pack(anchor="w", pady=(6, 3))
-        row = tb.Frame(panel)
-        row.pack(fill="x", pady=(0, 8))
-        self.populate_buttons = {}
-        self.category_status_vars = {}
-        for col, category in enumerate(FORECAST_CATEGORIES):
-            row.columnconfigure(col, weight=1, uniform="categories")
+        grid = tb.Frame(panel)
+        grid.pack(fill="x", pady=(10, 0))
+        grid.columnconfigure(0, weight=0)
+        for col in range(1, len(FORECAST_CATEGORIES) + 1):
+            grid.columnconfigure(col, weight=1, uniform="categories")
+
+        # Header: category and its sheet count.
+        for col, category in enumerate(FORECAST_CATEGORIES, start=1):
             label = "Other (SAC, BTL)" if category == "Other" else category
-            button = tb.Button(
-                row,
+            tb.Label(
+                grid,
                 text=f"{label}\n{len(routes_for([category]))} sheets",
-                bootstyle="info-outline",
-                command=lambda c=category: self._start_population(c),
-            )
-            button.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 4, 0))
-            self.populate_buttons[category] = button
-            status = tb.StringVar(value="Not run")
-            self.category_status_vars[category] = status
-            tb.Label(
-                row,
-                textvariable=status,
-                bootstyle="secondary",
-                font=("Segoe UI", 8),
-                wraplength=120,
+                font=("Segoe UI", 9, "bold"),
                 justify="center",
-            ).grid(row=1, column=col, pady=(3, 0))
+            ).grid(row=0, column=col, pady=(0, 4))
 
-        # Step 3 also runs one category at a time.
-        tb.Label(
-            panel,
-            text="3.  Validate Final Forecast (one category at a time)",
-            font=("Segoe UI", 10, "bold"),
-        ).pack(anchor="w", pady=(6, 3))
-        row = tb.Frame(panel)
-        row.pack(fill="x")
-        self.validate_buttons = {}
-        self.validation_status_vars = {}
-        for col, category in enumerate(FORECAST_CATEGORIES):
-            row.columnconfigure(col, weight=1, uniform="validate")
-            label = "Other (SAC, BTL)" if category == "Other" else category
+        self.populate_buttons, self.category_status_vars = self._step_row(
+            grid,
+            row=1,
+            title="2.  Update from\n     Tableau",
+            button_text="Update",
+            style="info-outline",
+            command=self._start_population,
+        )
+        tb.Separator(grid).grid(row=3, column=0, columnspan=5, sticky="ew", pady=6)
+        self.validate_buttons, self.validation_status_vars = self._step_row(
+            grid,
+            row=4,
+            title="3.  Validate",
+            button_text="Validate",
+            style="primary-outline",
+            command=self._start_validation,
+        )
+
+    def _step_row(self, grid, *, row, title, button_text, style, command):
+        """One step: a button and a status line per category."""
+        tb.Label(grid, text=title, font=("Segoe UI", 10, "bold"), justify="left").grid(
+            row=row, column=0, rowspan=2, sticky="w", padx=(0, 10)
+        )
+        buttons, statuses = {}, {}
+        for col, category in enumerate(FORECAST_CATEGORIES, start=1):
             button = tb.Button(
-                row,
-                text=label,
-                bootstyle="primary-outline",
-                command=lambda c=category: self._start_validation(c),
+                grid,
+                text=button_text,
+                bootstyle=style,
+                command=lambda c=category: command(c),
             )
-            button.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 4, 0))
-            self.validate_buttons[category] = button
+            button.grid(row=row, column=col, sticky="ew", padx=(0 if col == 1 else 4, 0))
+            buttons[category] = button
             status = tb.StringVar(value="Not run")
-            self.validation_status_vars[category] = status
+            statuses[category] = status
             tb.Label(
-                row,
+                grid,
                 textvariable=status,
                 bootstyle="secondary",
                 font=("Segoe UI", 8),
-                wraplength=120,
+                wraplength=130,
                 justify="center",
-            ).grid(row=1, column=col, pady=(3, 0))
+            ).grid(row=row + 1, column=col, pady=(2, 0))
+        return buttons, statuses
 
     def _build_status_panel(self, parent) -> None:
         panel = tb.Labelframe(
@@ -398,18 +400,6 @@ class ForecastRefreshView(tb.Frame):
             text=text,
             font=("Segoe UI", 10, "bold"),
         ).pack(anchor="w")
-
-    def _path_picker(self, parent, label, variable, command) -> None:
-        self._label(parent, label)
-        row = tb.Frame(parent)
-        row.pack(fill="x", pady=(3, 7))
-        tb.Entry(row, textvariable=variable).pack(side="left", fill="x", expand=True)
-        tb.Button(
-            row,
-            text="Browse",
-            bootstyle="secondary-outline",
-            command=command,
-        ).pack(side="right", padx=(8, 0))
 
     @staticmethod
     def _stat(parent, column, variable, label) -> None:
