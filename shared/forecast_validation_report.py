@@ -1,5 +1,8 @@
 from __future__ import annotations
-from datetime import datetime
+
+import json
+import os
+from datetime import date, datetime
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -14,6 +17,59 @@ def _counts(results):
     return out
 
 
+def merge_saved_results(
+    output_folder,
+    forecast_month,
+    forecast_year,
+    forecast_type,
+    categories_run,
+    results,
+) -> list[dict]:
+    """Keep the latest results of every category for the month's report.
+
+    The results are saved beside the report as a small .results.json file.
+    Running one category replaces that category's rows; results saved for
+    another forecast month are ignored.
+    """
+    period = date(forecast_year, forecast_month, 1)
+    store_path = Path(output_folder) / f"Forecast_Validation_{period:%b}_{forecast_year}.results.json"
+
+    saved = {}
+    try:
+        data = json.loads(store_path.read_text(encoding="utf-8"))
+        if data.get("forecast_type") == forecast_type and isinstance(data.get("categories"), dict):
+            for category, rows in data["categories"].items():
+                # An earlier version saved {"validated_at": ..., "results": [...]}.
+                if isinstance(rows, dict):
+                    rows = rows.get("results")
+                if isinstance(rows, list):
+                    saved[category] = [row for row in rows if isinstance(row, dict)]
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    def plain(value):
+        return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+    for category in categories_run:
+        saved[category] = [
+            {key: plain(value) for key, value in item.items()}
+            for item in results
+            if item.get("category", "") == category
+        ]
+
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
+    staged = store_path.with_name(f"~staging_{store_path.name}")
+    staged.write_text(
+        json.dumps({"forecast_type": forecast_type, "categories": saved}, indent=1, default=str),
+        encoding="utf-8",
+    )
+    os.replace(staged, store_path)
+
+    order = ["OPEX", "Direct Cost", "Revenue", "Other"]
+    ordered = [c for c in order if c in saved] + [c for c in saved if c not in order]
+    return [item for category in ordered for item in saved[category]]
+
+
 def write_forecast_validation_report(
     validation_result,
     output_folder,
@@ -22,6 +78,7 @@ def write_forecast_validation_report(
     forecast_year,
     forecast_type,
     tolerance=5.00,
+    forecast_start=None,
 ):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -61,7 +118,7 @@ def write_forecast_validation_report(
     rows = [
         ("Forecast Period", period.strftime("%B %Y")),
         ("Fiscal Year", fiscal_year),
-        ("Forecast Start", period),
+        ("Forecast Start", forecast_start or period),
         ("Forecast Type", forecast_type),
         ("Tolerance", tolerance),
         ("Routes Reported", len(results)),
@@ -113,6 +170,7 @@ def write_forecast_validation_report(
         "Forecast Start",
         "Forecast Type",
         "Note",
+        "Category",
     ]
     for col, h in enumerate(headers, 1):
         c = detail.cell(1, col, h)
@@ -135,6 +193,7 @@ def write_forecast_validation_report(
             item.get("forecast_start"),
             item.get("forecast_type"),
             item.get("note"),
+            item.get("category"),
         ]
         for col, v in enumerate(vals, 1):
             detail.cell(r, col, v)
@@ -161,6 +220,7 @@ def write_forecast_validation_report(
         10: 18,
         11: 26,
         12: 70,
+        13: 16,
     }
     for col, w in widths.items():
         detail.column_dimensions[get_column_letter(col)].width = w

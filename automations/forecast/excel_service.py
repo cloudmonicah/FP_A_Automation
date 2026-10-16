@@ -245,6 +245,15 @@ def find_header(
 # ============================================================
 
 
+def forecast_type_for(fiscal_year: str, forecast_month: int, forecast_year: int) -> str:
+    """The Forecast Type a month's run uses: the previous month's forecast.
+
+    October 2026 -> "FY27 Forecast_092026"; January 2027 -> "FY27 Forecast_122026".
+    """
+    month, year = (12, forecast_year - 1) if forecast_month == 1 else (forecast_month - 1, forecast_year)
+    return f"{fiscal_year} Forecast_{month:02d}{year}"
+
+
 def update_forecast_workbook(
     workbook_path: str | Path,
     target_fiscal_year: str,
@@ -268,9 +277,7 @@ def update_forecast_workbook(
         data_only=False,
     )
 
-    forecast_type_value = (
-        f"{target_fiscal_year} Forecast_" f"{forecast_month:02d}" f"{forecast_year}"
-    )
+    forecast_type_value = forecast_type_for(target_fiscal_year, forecast_month, forecast_year)
 
     worksheets_updated = 0
     forecast_values_updated = 0

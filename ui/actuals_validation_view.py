@@ -40,13 +40,17 @@ class ActualsValidationView(tb.Frame):
         # CLOSED PERIOD VARIABLES
         # =====================================================
 
-        # Default period used while we are testing the build.
+        # The closed month is normally the month before today.
+        from datetime import date as _date
+
+        _today = _date.today()
+        _closed = _date(_today.year - (_today.month == 1), (_today.month - 2) % 12 + 1, 1)
         self.closed_period_month_var = tb.StringVar(
-            value="July",
+            value=_closed.strftime("%B"),
         )
 
         self.closed_period_year_var = tb.StringVar(
-            value="2026",
+            value=str(_closed.year),
         )
 
         # =====================================================

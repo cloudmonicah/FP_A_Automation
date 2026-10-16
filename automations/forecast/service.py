@@ -1,5 +1,5 @@
 from __future__ import annotations
-from shared.friendly_errors import explain
+from shared.friendly_errors import PlainLanguageError, explain
 
 from datetime import date
 from pathlib import Path
@@ -10,9 +10,10 @@ from openpyxl import Workbook
 
 from .excel_service import (
     create_forecast_refresh,
+    forecast_type_for,
     populate_forecast_sheet_from_audit,
 )
-from .mapping import FORECAST_CATEGORIES, FORECAST_ROUTES, routes_for
+from .mapping import FORECAST_CATEGORIES, routes_for
 from .tableau_service import (
     extract_forecast_worksheets,
     open_tableau_workbook,
@@ -23,6 +24,7 @@ from shared.forecast_output_paths import (
 )
 
 from shared.forecast_validation_report import (
+    merge_saved_results,
     write_forecast_validation_report,
 )
 from .validation_service import run_grouped_individual_validation
@@ -43,10 +45,16 @@ MONTH_ABBR = {
 }
 
 
+def default_forecast_start(forecast_month: int, forecast_year: int) -> date:
+    """The 1st of the forecast month (October 2026 -> 10/1/2026); editable on the page."""
+    return date(forecast_year, forecast_month, 1)
+
+
 def build_forecast_period(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
 ) -> dict:
     """Build the single monthly period used by Excel and every Tableau source."""
     if forecast_month not in range(1, 13):
@@ -57,14 +65,12 @@ def build_forecast_period(
         raise ValueError("Fiscal year must look like FY27.")
 
     month_start = date(forecast_year, forecast_month, 1)
-    # Forecast Start is the 1st of the month BEFORE the forecast month
-    # (October 2026 forecast -> 9/1/2026), so Tableau shows all 12 months.
-    start = date(
-        forecast_year if forecast_month > 1 else forecast_year - 1,
-        forecast_month - 1 if forecast_month > 1 else 12,
-        1,
-    )
-    forecast_type = f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
+    # Forecast Start is entered on the page; it defaults to the forecast month.
+    start = forecast_start or default_forecast_start(forecast_month, forecast_year)
+    if start.day != 1:
+        raise PlainLanguageError("Forecast Start must be the 1st of a month, for example 10/01/2026.")
+    # Forecast Type is the previous month's forecast (October -> FY27 Forecast_092026).
+    forecast_type = forecast_type_for(fiscal_year, forecast_month, forecast_year)
 
     return {
         "fiscal_year": fiscal_year,
@@ -83,6 +89,7 @@ def set_consolidated_forecast_period(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
 ) -> dict:
     """
     Set the consolidated FY Forecast workbook to the GUI-selected period.
@@ -96,6 +103,7 @@ def set_consolidated_forecast_period(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     # Proven Forecast Start updater + disk verification.
@@ -169,6 +177,7 @@ def prepare_monthly_forecast(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
     overwrite_mode: str = "skip",
     open_tableau: bool = True,
 ) -> dict:
@@ -177,6 +186,7 @@ def prepare_monthly_forecast(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     excel_result = create_forecast_refresh(
@@ -193,6 +203,7 @@ def prepare_monthly_forecast(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     if open_tableau:
@@ -294,6 +305,7 @@ def populate_monthly_forecast_from_tableau(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
     categories: list[str] | None = None,
 ) -> dict:
     """
@@ -307,6 +319,7 @@ def populate_monthly_forecast_from_tableau(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     # Re-apply the selected period immediately before extraction.
@@ -315,6 +328,7 @@ def populate_monthly_forecast_from_tableau(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     routes = routes_for(categories)
@@ -405,18 +419,21 @@ def validate_monthly_forecast(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
-    tolerance: float = 1000.00,
+    forecast_start: date | None = None,
+    tolerance: float = 5.00,
+    categories: list[str] | None = None,
 ) -> dict:
+    """Step 3 for one category (OPEX, Direct Cost, Revenue, Other) or all.
 
+    The month's report keeps the latest results of every category: running
+    Revenue replaces Revenue's rows and leaves the other categories alone.
+    """
     period = build_forecast_period(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
-
-    # ---------------------------------------------------------
-    # STACY VALIDATION OUTPUT LOCATION
-    # ---------------------------------------------------------
 
     validation_output_folder = get_forecast_validation_output_folder(
         fiscal_year=period["fiscal_year"],
@@ -425,41 +442,39 @@ def validate_monthly_forecast(
         create=True,
     )
 
-    # ---------------------------------------------------------
-    # RUN EXISTING STAGE 5 VALIDATION
-    # ---------------------------------------------------------
-
     result = run_grouped_individual_validation(
-        routes=FORECAST_ROUTES,
+        routes=routes_for(categories),
         forecast_folder=forecast_folder,
         target_month_abbr=period["target_month_abbr"],
         forecast_month=forecast_month,
         forecast_year=forecast_year,
         tolerance=tolerance,
+        forecast_start=period["forecast_start"],
+        forecast_type=period["forecast_type"],
     )
 
-    # ---------------------------------------------------------
-    # CREATE STACY VALIDATION WORKBOOK
-    # ---------------------------------------------------------
+    all_results = merge_saved_results(
+        output_folder=validation_output_folder,
+        forecast_month=period["forecast_month"],
+        forecast_year=period["forecast_year"],
+        forecast_type=period["forecast_type"],
+        categories_run=list(categories or FORECAST_CATEGORIES),
+        results=result["results"],
+    )
 
     report_path = write_forecast_validation_report(
-        validation_result=result,
+        validation_result={**result, "results": all_results},
         output_folder=validation_output_folder,
         fiscal_year=period["fiscal_year"],
         forecast_month=period["forecast_month"],
         forecast_year=period["forecast_year"],
         forecast_type=period["forecast_type"],
         tolerance=tolerance,
+        forecast_start=period["forecast_start"],
     )
 
-    # ---------------------------------------------------------
-    # RETURN EVERYTHING TO GUI
-    # ---------------------------------------------------------
-
+    result["categories"] = list(categories or FORECAST_CATEGORIES)
     result["period"] = period
-
     result["validation_output_folder"] = str(validation_output_folder)
-
     result["validation_report"] = str(report_path)
-
     return result

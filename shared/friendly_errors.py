@@ -44,6 +44,32 @@ _rule(
     lambda m, t: f"The Previous Forecast Folder was not found: {m.group('p').strip()}",
 )
 
+# --- Monthly Forecast, step 2 ----------------------------------------------
+_rule(
+    r'Excel (?:work)?sheet "(?P<sheet>[^"]+)" (?:was )?not found\. Available(?: sheets)?: (?P<have>\[.*?\])',
+    lambda m, t: (
+        f'The forecast workbook has no tab called "{m.group("sheet")}" '
+        f"(its tabs are {m.group('have')}). The tab may have been renamed; "
+        "the sheet name in the mapping needs to match it."
+    ),
+)
+
+# --- Monthly Forecast, step 3 ----------------------------------------------
+_rule(
+    r'Expected one Company filter on individual forecast tab "(?P<tab>[^"]+)"',
+    lambda m, t: (
+        f'The Tableau tab "{m.group("tab")}" does not have exactly one Company '
+        "filter, so it can't be set to the right company. This line was not "
+        "validated. Check the Company filter on that tab."
+    ),
+)
+
+_rule(
+    r'Individual Tableau crosstab does not contain a row where Company = "Grand Total"',
+    "The Tableau tab has no Grand Total row, so its total could not be read. "
+    "Turn on Grand Totals for that tab in Tableau.",
+)
+
 # --- Tableau ---------------------------------------------------------------
 _rule(
     r'Tableau "Copy" menu',
@@ -56,6 +82,14 @@ _rule(
         f'Tableau could not open the tab "{m.group("tab") or m.group("tab2")}". '
         "The tab may have been renamed, or Tableau is still busy. "
         "Close any open Tableau menu or window and run again."
+    ),
+)
+_rule(
+    r"Expected one CBL (?P<area>Revenue|Direct Cost|OPEX) section start",
+    lambda m, t: (
+        f"The {m.group('area')} section could not be found in the CBL financial statement "
+        "(Financials tab). Check that the right month's statement is selected. "
+        "If it is, the statement layout may have changed; please send it to support."
     ),
 )
 _rule(

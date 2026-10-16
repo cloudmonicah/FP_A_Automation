@@ -335,7 +335,10 @@ def get_individual_tableau_grand_total(
     grand_total_row = None
 
     for row in tableau_rows:
-        if _norm(row.get("Company")) == "grand total":
+        # The label sits under Company; a tab without a Company column (ALIV
+        # Head Office) puts it in its first column instead.
+        label = row.get("Company") if "Company" in row else next(iter(row.values()), None)
+        if _norm(label) == "grand total":
             grand_total_row = row
 
     if grand_total_row is None:
@@ -516,6 +519,7 @@ def _prepare_individual_forecast_copy(
     tab: str,
     company: str,
     forecast_start: date,
+    forecast_type: str | None = None,
 ) -> dict:
     """
     Prepare one route-specific temporary individual Tableau workbook.
@@ -673,11 +677,15 @@ def _prepare_individual_forecast_copy(
             f'Multiple Forecast Type filters on individual forecast tab "{tab}".'
         )
 
-    fiscal_end = (
-        forecast_start.year + 1 if forecast_start.month >= 7 else forecast_start.year
-    )
-
-    forecast_type_value = f"FY{str(fiscal_end)[-2:]} Forecast_{forecast_start:%m%Y}"
+    # Forecast Type comes from the selected forecast month (FY27
+    # Forecast_092026 for October).
+    if forecast_type:
+        forecast_type_value = str(forecast_type).strip()
+    else:
+        fiscal_end = (
+            forecast_start.year + 1 if forecast_start.month >= 7 else forecast_start.year
+        )
+        forecast_type_value = f"FY{str(fiscal_end)[-2:]} Forecast_{forecast_start:%m%Y}"
 
     if forecast_filters:
         selected = forecast_filters[0].findall(".//groupfilter[@function='member']")
@@ -736,19 +744,18 @@ def _prepare_individual_forecast_copy(
                 f'forecast calculation on "{tab}".'
             )
 
-        matching_measure_declarations = 0
-
-    for column in root.iter("column"):
-        if column.get("name") == measure_name and "param-domain-type" in column.attrib:
-            column.set("value", '"Forecast"')
-
-            calculation = column.find("calculation")
-
-            if calculation is not None:
-                calculation.set(
-                    "formula",
-                    '"Forecast"',
-                )
+        # This block used to sit outside the else, so every tab with a
+        # Forecast Type filter failed ("measure_name" not defined) and was
+        # reported ACTION REQUIRED without Tableau ever opening.
+        for column in root.iter("column"):
+            if (
+                column.get("name") == measure_name
+                and "param-domain-type" in column.attrib
+            ):
+                column.set("value", '"Forecast"')
+                calculation = column.find("calculation")
+                if calculation is not None:
+                    calculation.set("formula", '"Forecast"')
 
         period_mode = "Forecast Measure"
 
@@ -930,9 +937,14 @@ def run_grouped_individual_validation(
     only_workbooks: list[str] | None = None,
     tolerance: float = 5.00,
     open_wait_seconds: float = 8.0,
+    forecast_start: date | None = None,
+    forecast_type: str | None = None,
 ) -> dict:
     """
     Stage 5B controlled runner.
+
+    ``forecast_start`` / ``forecast_type`` come from the selected period
+    (October 2026 -> 10/1/2026 and FY27 Forecast_092026).
 
     The function name is retained for compatibility with the existing
     Stage 5B test. Internally V1 intentionally validates route-by-route
@@ -972,11 +984,8 @@ def run_grouped_individual_validation(
     results = []
     workbook_results = []
 
-    forecast_start = date(
-        forecast_year,
-        forecast_month,
-        1,
-    )
+    if forecast_start is None:
+        forecast_start = date(forecast_year, forecast_month, 1)
 
     for route in selected_routes:
         source = (
@@ -1009,6 +1018,7 @@ def run_grouped_individual_validation(
                 tab=route["individual_tableau_worksheet"],
                 company=route.get("company_filter"),
                 forecast_start=forecast_start,
+                forecast_type=forecast_type,
             )
 
             workbook_record["forecast_start"] = preparation["forecast_start_value"]
@@ -1111,6 +1121,10 @@ def run_grouped_individual_validation(
                         workbook_record["error"] = cleanup_warning
 
             workbook_results.append(workbook_record)
+
+    # One result per selected route, in order: tag each with its category.
+    for route, item in zip(selected_routes, results):
+        item["category"] = route.get("category", "")
 
     passed = sum(item.get("status") == "PASS" for item in results)
 
