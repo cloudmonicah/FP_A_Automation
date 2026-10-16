@@ -81,7 +81,26 @@ def read_cbl_area(workbook_path, area, closed_period=None):
         if area in ("Revenue", "Direct Cost"):
             starts = [i for i in starts if fs_rows[i][2] is None]
         if len(starts) != 1:
-            raise ValueError(f"Expected one CBL {area} section start.")
+            # Quarter-end statements can repeat a section (for example a quarter
+            # block). Keep only the headings that sit under an "Actual YTD" header.
+            def under_ytd(index):
+                headers = [
+                    str(row[2] or "").strip().upper()
+                    for row in fs_rows[:index]
+                    if str(row[2] or "").strip().upper()
+                    in ("ACTUAL YTD", "CURRENT MONTH", "ACTUAL")
+                ]
+                return bool(headers) and headers[-1] == "ACTUAL YTD"
+
+            narrowed = [i for i in starts if under_ytd(i)]
+            if len(narrowed) == 1:
+                starts = narrowed
+        if len(starts) != 1:
+            raise ValueError(
+                f"Expected one CBL {area} section start; found {len(starts)} "
+                f"heading(s) '{start_label}' on the Financials tab"
+                + (f" (rows {', '.join(str(i + 1) for i in starts)})." if starts else ".")
+            )
         start = starts[0]
         # Require the section's own header to state Actual YTD.
         prior_headers = [
