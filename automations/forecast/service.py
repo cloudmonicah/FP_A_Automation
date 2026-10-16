@@ -56,7 +56,14 @@ def build_forecast_period(
     if not re.fullmatch(r"FY\d{2}", fiscal_year):
         raise ValueError("Fiscal year must look like FY27.")
 
-    start = date(forecast_year, forecast_month, 1)
+    month_start = date(forecast_year, forecast_month, 1)
+    # Forecast Start is the 1st of the month BEFORE the forecast month
+    # (October 2026 forecast -> 9/1/2026), so Tableau shows all 12 months.
+    start = date(
+        forecast_year if forecast_month > 1 else forecast_year - 1,
+        forecast_month - 1 if forecast_month > 1 else 12,
+        1,
+    )
     forecast_type = f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
 
     return {
@@ -67,7 +74,7 @@ def build_forecast_period(
         "forecast_start_tableau": f"#{start:%Y-%m-%d}#",
         "forecast_type": forecast_type,
         "target_month_abbr": MONTH_ABBR[forecast_month],
-        "display": f"{start:%B %Y}",
+        "display": f"{month_start:%B %Y}",
     }
 
 
@@ -94,8 +101,8 @@ def set_consolidated_forecast_period(
     # Proven Forecast Start updater + disk verification.
     set_forecast_start_parameter(
         tableau_workbook_path=path,
-        forecast_month=forecast_month,
-        forecast_year=forecast_year,
+        forecast_month=period["forecast_start"].month,
+        forecast_year=period["forecast_start"].year,
     )
 
     tree = ET.parse(path)
@@ -263,6 +270,24 @@ def _resolve_target_filename(
     return resolved
 
 
+def _make_sure_tableau_is_open(tableau_workbook_path) -> None:
+    """Open the consolidated workbook if step 1 didn't (or it was closed)."""
+    from .tableau_service import _get_tableau_window, wait_for_tableau_workbook
+
+    try:
+        _get_tableau_window(
+            max_attempts=1,
+            retry_wait_seconds=0,
+            tableau_workbook_path=tableau_workbook_path,
+        )
+        return
+    except Exception:
+        pass
+    print("The consolidated Tableau workbook is not open; opening it now...")
+    open_tableau_workbook(tableau_workbook_path=tableau_workbook_path)
+    wait_for_tableau_workbook(tableau_workbook_path)
+
+
 def populate_monthly_forecast_from_tableau(
     forecast_folder: str | Path,
     tableau_workbook_path: str | Path,
@@ -294,6 +319,8 @@ def populate_monthly_forecast_from_tableau(
 
     routes = routes_for(categories)
     worksheet_names = [route["tableau_worksheet"] for route in routes]
+
+    _make_sure_tableau_is_open(tableau_workbook_path)
 
     extracts, extract_errors = extract_forecast_worksheets(
         tableau_workbook_path=tableau_workbook_path,
@@ -339,6 +366,7 @@ def populate_monthly_forecast_from_tableau(
                     "tableau_worksheet": route["tableau_worksheet"],
                     "rows": result.get("tableau_detail_rows", 0),
                     "months_pasted": result.get("months_pasted", []),
+                    "months_blank_in_tableau": result.get("months_blank_in_tableau", []),
                 }
             )
         except Exception as exc:

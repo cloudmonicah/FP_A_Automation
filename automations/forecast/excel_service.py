@@ -1071,10 +1071,6 @@ def read_tableau_audit_sheet(
         wb.close()
 
 
-class MissingFiscalMonthsError(PlainLanguageError, RuntimeError):
-    """The Tableau tab doesn't show all 12 fiscal months; nothing was pasted."""
-
-
 _MONTH_HEADER_FORMATS = ("%b-%y", "%B %Y", "%b %Y", "%b %y", "%Y-%m", "%m/%d/%Y")
 
 
@@ -1167,18 +1163,10 @@ def populate_forecast_sheet_from_tableau_rows(
         tableau_months = _tableau_month_columns(detail_rows, fiscal_year)
         if not tableau_months:
             raise RuntimeError("No Tableau fiscal month columns were found.")
-        # Every fiscal period must come over; a partial paste would leave the
-        # other months stale.
-        missing = [m for m in FISCAL_MONTH_ORDER if m not in tableau_months]
-        if missing:
-            shown = [MONTH_ABBR[m] for m in sorted(tableau_months, key=FISCAL_MONTH_ORDER.get)]
-            raise MissingFiscalMonthsError(
-                "The Tableau tab shows only "
-                f"{', '.join(shown)}; all 12 fiscal months (Jul-Jun) must be there. "
-                f"Missing: {', '.join(MONTH_ABBR[m] for m in sorted(missing, key=FISCAL_MONTH_ORDER.get))}. "
-                "The sheet was not changed. In Tableau, check the tab's Forecast "
-                "Type filter and the Forecast Start parameter."
-            )
+        # Tableau leaves out months with no data (e.g. a tab with nothing
+        # posted Jul-Sep). Those months are pasted as blank, like the tab
+        # shows them, and reported, so every fiscal period is filled in.
+        missing = [m for m in sorted(FISCAL_MONTH_ORDER, key=FISCAL_MONTH_ORDER.get) if m not in tableau_months]
 
         # Every other Tableau column goes to the Excel column with the same
         # header (or a known alias, e.g. "Bus Code Name" = "GL Business Code").
@@ -1249,6 +1237,8 @@ def populate_forecast_sheet_from_tableau_rows(
             ws.cell(row, ft_col).value = forecast_type
             for header, col in paste_columns.items():
                 ws.cell(row, col).value = _s4number(tableau_row.get(header))
+            for month in missing:
+                ws.cell(row, month_cols[month]).value = None
             for month, header in tableau_months.items():
                 value = _s4number(tableau_row.get(header))
                 # Existing rule (step 3 relies on it): Revenue workbooks hold
@@ -1279,6 +1269,7 @@ def populate_forecast_sheet_from_tableau_rows(
             "excel_detail_rows": new_count,
             "old_excel_detail_rows": old_count,
             "months_pasted": [MONTH_ABBR[m] for m in FISCAL_MONTH_ORDER if m in tableau_months],
+            "months_blank_in_tableau": [MONTH_ABBR[m] for m in missing],
             "forecast_type": forecast_type,
             "revenue_sign_rule": revenue,
             "total_row": total_row,

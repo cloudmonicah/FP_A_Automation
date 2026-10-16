@@ -88,17 +88,11 @@ def test_month_from_another_fiscal_year_is_not_pasted(tmp_path):
     assert load_workbook(path)["ALIV"].cell(3, 4).value == 1
 
 
-def test_tableau_tab_missing_months_leaves_the_sheet_unchanged(tmp_path):
-    import pytest
-
-    from automations.forecast.excel_service import MissingFiscalMonthsError
-    from shared.friendly_errors import friendly
-
-    path = _sheet(tmp_path / "FY27 OPEX Legal_Oct Forecast.xlsx", [(6000, "Salaries")])
-    before = path.read_bytes()
-    row = {k: v for k, v in _row("6000", "Salaries", "1", "2", "3").items() if k not in LATER}  # like the live run
-    with pytest.raises(MissingFiscalMonthsError) as error:
-        populate_forecast_sheet_from_tableau_rows(path, "ALIV", [row], "FY27")
-    assert path.read_bytes() == before
-    message = friendly(error.value)
-    assert "shows only Jul, Aug, Sep" in message and "Missing: Oct, Nov, Dec, Jan, Feb, Mar, Apr, May, Jun" in message
+def test_months_the_tableau_tab_leaves_out_are_pasted_blank(tmp_path):
+    # Live run: "INTERNET BANDWIDTH (ALIV BUSINESS)" shows only Oct-26..Jun-27.
+    path = _sheet(tmp_path / "FY27 CBL BANDWIDTH_Oct Forecast.xlsx", [(6000, "Bandwidth")])
+    row = {k: v for k, v in _row("6000", "Bandwidth", "1", "2", "3").items() if k not in ("Jul-26", "Aug-26", "Sep-26")}
+    result = populate_forecast_sheet_from_tableau_rows(path, "ALIV", [row], "FY27")
+    ws = load_workbook(path)["ALIV"]
+    assert [ws.cell(3, c).value for c in range(4, 16)] == [None, None, None] + [9] * 9
+    assert result["months_blank_in_tableau"] == ["Jul", "Aug", "Sep"]

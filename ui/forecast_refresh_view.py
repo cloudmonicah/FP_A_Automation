@@ -751,6 +751,24 @@ class ForecastRefreshView(tb.Frame):
             log.exception("Error in %s", type(self).__name__)
             self.after(0, lambda e=exc, c=inputs["category"]: self._population_failed(c, e))
 
+    @staticmethod
+    def _blank_month_note(result: dict) -> str:
+        """Sheets whose Tableau tab had no data for some months (pasted blank)."""
+        lines = [
+            f"  - {item['workbook']} / {item['worksheet']}: "
+            f"{', '.join(item['months_blank_in_tableau'])}"
+            for item in result.get("passed", [])
+            if item.get("months_blank_in_tableau")
+        ]
+        if not lines:
+            return ""
+        return (
+            "\nNo data in Tableau for these months (left blank):\n"
+            + "\n".join(lines[:10])
+            + ("\n  ...and more (see the log)." if len(lines) > 10 else "")
+            + "\n"
+        )
+
     def _population_failed(self, category: str, error: Exception) -> None:
         self.category_status_vars[category].set("Stopped - see message")
         self._process_failed(error)
@@ -809,7 +827,9 @@ class ForecastRefreshView(tb.Frame):
                     f"{category}: {result['workbooks_updated']} workbooks updated.\n"
                     f"{result['worksheets_updated']} worksheets updated.\n"
                     f"Months pasted from Tableau: {result.get('months_pasted') or 'none'}\n"
-                    "Formulas in the workbooks were kept.\n\n"
+                    "Formulas in the workbooks were kept.\n"
+                    + self._blank_month_note(result)
+                    + "\n"
                     "Click '3.  Validate Final Forecast' to compare "
                     "the completed Excel totals to the individual "
                     "Tableau workbooks."
