@@ -683,25 +683,33 @@ class ForecastRefreshView(tb.Frame):
         if not confirmed:
             return
 
+        # Read everything on the UI thread; the worker must not touch Tk.
+        inputs = {
+            "period": period,
+            "output_folder": self.output_folder_var.get().strip(),
+            "tableau_workbook": self.tableau_workbook_var.get().strip(),
+        }
+
         self._set_busy(True)
         self.status_var.set("Updating from Tableau")
         self.status_description_var.set(
-            "Reading the mapped Tableau crosstabs and rebuilding "
-            "the monthly forecast workbooks."
+            "Copying each mapped Tableau tab and pasting it into its "
+            "forecast sheet."
         )
         self.progress_var.set(50)
 
         threading.Thread(
             target=self._run_population,
+            args=(inputs,),
             daemon=True,
         ).start()
 
-    def _run_population(self) -> None:
+    def _run_population(self, inputs: dict) -> None:
         try:
-            period = self._period()
+            period = inputs["period"]
             result = populate_monthly_forecast_from_tableau(
-                forecast_folder=self.output_folder_var.get().strip(),
-                tableau_workbook_path=self.tableau_workbook_var.get().strip(),
+                forecast_folder=inputs["output_folder"],
+                tableau_workbook_path=inputs["tableau_workbook"],
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
@@ -753,7 +761,9 @@ class ForecastRefreshView(tb.Frame):
                 "Forecast Population Complete",
                 (
                     f"{result['workbooks_updated']} workbooks updated.\n"
-                    f"{result['worksheets_updated']} worksheets updated.\n\n"
+                    f"{result['worksheets_updated']} worksheets updated.\n"
+                    f"Months pasted from Tableau: {result.get('months_pasted') or 'none'}\n"
+                    "Formulas in the workbooks were kept.\n\n"
                     "Click '3.  Validate Final Forecast' to compare "
                     "the completed Excel totals to the individual "
                     "Tableau workbooks."

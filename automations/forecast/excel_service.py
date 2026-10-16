@@ -1071,12 +1071,65 @@ def read_tableau_audit_sheet(
         wb.close()
 
 
+_MONTH_HEADER_FORMATS = ("%b-%y", "%B %Y", "%b %Y", "%b %y", "%Y-%m", "%m/%d/%Y")
+
+
+def _tableau_month_columns(rows: list[dict], fiscal_year: str) -> dict[int, Any]:
+    """{month: Tableau column} for the month columns the Tableau tab shows.
+
+    Headers such as "Jul-26" are matched by month and year, so a column from
+    another fiscal year is never pasted into this one.
+    """
+    match = re.search(r"(\d{2,4})", str(fiscal_year))
+    if not match:
+        raise ValueError(f"Invalid fiscal year: {fiscal_year}")
+    end = int(match.group(1))
+    end = end + 2000 if end < 100 else end
+
+    found = {}
+    for header in rows[0].keys():
+        text = " ".join(str(header or "").split())
+        year = month = None
+        for fmt in _MONTH_HEADER_FORMATS:
+            try:
+                parsed = datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+            year, month = parsed.year, parsed.month
+            break
+        if month is None:
+            month = _s4_month(text)
+        if month is None:
+            continue
+        if year is not None and year != (end - 1 if month >= 7 else end):
+            continue  # another fiscal year
+        if month in found:
+            raise RuntimeError(f"Duplicate Tableau month: {MONTH_ABBR[month]}")
+        found[month] = header
+    return found
+
+
 def populate_forecast_sheet_from_tableau_rows(
     workbook_path: str | Path,
     excel_sheet_name: str,
     tableau_rows: list[dict],
     fiscal_year: str,
 ) -> dict:
+    """Paste one consolidated Tableau tab into its forecast sheet.
+
+    Like copy and paste: Tableau's lines replace the sheet's lines, row for
+    row, in the columns Tableau has (month columns by month and year, other
+    columns by header name). Nothing is calculated, and every formula stays a
+    formula:
+
+    * columns Tableau doesn't show (e.g. the forecast months, Grand Total)
+      keep their formulas on existing rows;
+    * added rows get the formulas of the row above, filled down;
+    * the header row is left alone (its =EDATE dates stay);
+    * the bottom total row's SUMs are re-pointed at the new rows.
+    """
+    from openpyxl.formula.translate import Translator
+
     workbook_path = Path(workbook_path)
     wb = load_workbook(workbook_path, data_only=False)
 
@@ -1098,59 +1151,109 @@ def populate_forecast_sheet_from_tableau_rows(
             ws = matches[0]
 
         structure = _s4_structure(ws)
+        header_row = structure["header_row"]
+        month_cols = structure["month_columns"]
+        gt_col = structure["grand_total_column"]
+        ft_col = structure["forecast_type_column"]
         forecast_type = _s4_forecast_type(ws, structure)
+
         detail_rows = _s4_detail_rows(tableau_rows)
         if not detail_rows:
             raise RuntimeError("No usable Tableau detail rows supplied.")
-        tableau_months = _s4_tableau_months(detail_rows)
+        tableau_months = _tableau_month_columns(detail_rows, fiscal_year)
+        if not tableau_months:
+            raise RuntimeError("No Tableau fiscal month columns were found.")
+
+        # Every other Tableau column goes to the Excel column with the same
+        # header (or a known alias, e.g. "Bus Code Name" = "GL Business Code").
+        excel_headers = {}
+        for col in range(1, ws.max_column + 1):
+            key = _s4norm(ws.cell(header_row, col).value)
+            if key:
+                excel_headers.setdefault(key, col)
+        protected = {gt_col, ft_col, *month_cols.values()}
+        paste_columns = {}
+        for header in detail_rows[0].keys():
+            if header in tableau_months.values():
+                continue
+            key = _s4norm(header)
+            if key in {"grand total", "total"}:
+                continue
+            col = excel_headers.get(key)
+            if col is None:
+                for aliases in TABLEAU_ALIASES.values():
+                    if key in aliases:
+                        col = next((excel_headers[a] for a in aliases if a in excel_headers), None)
+                        break
+            if col is not None and col not in protected:
+                paste_columns[header] = col
 
         first, old_last = _s4_current_detail(ws, structure)
         old_count = max(0, old_last - first + 1)
         new_count = len(detail_rows)
 
-        style_row = first if old_count else structure["header_row"]
+        style_row = first if old_count else header_row
         styles = {col: ws.cell(style_row, col) for col in range(1, ws.max_column + 1)}
         row_height = ws.row_dimensions[style_row].height
 
+        # Formulas of the last existing line, to fill down into added lines.
+        template_row = old_last if old_count else None
+        template = {}
+        if template_row:
+            for col in range(1, ws.max_column + 1):
+                value = ws.cell(template_row, col).value
+                if is_formula(value) and col not in paste_columns.values():
+                    template[col] = value
+
         difference = new_count - old_count
         if difference > 0:
-            insert_at = old_last + 1 if old_count else first
-            ws.insert_rows(insert_at, amount=difference)
+            ws.insert_rows(old_last + 1 if old_count else first, amount=difference)
         elif difference < 0:
             ws.delete_rows(first + new_count, amount=abs(difference))
 
         last = first + new_count - 1
-
-        for row in range(first, last + 1):
-            for col, source in styles.items():
-                _s4_copy_style(source, ws.cell(row, col))
-            if row_height is not None:
-                ws.row_dimensions[row].height = row_height
-
+        pasted_months = {month_cols[m] for m in tableau_months}
         revenue = "revenue" in workbook_path.name.lower()
 
         for offset, tableau_row in enumerate(detail_rows):
-            excel_row = first + offset
-            ws.cell(excel_row, structure["forecast_type_column"]).value = forecast_type
+            row = first + offset
+            added = old_count == 0 or row > old_last
+            if added:
+                for col, source in styles.items():
+                    _s4_copy_style(source, ws.cell(row, col))
+                if row_height is not None:
+                    ws.row_dimensions[row].height = row_height
+                for col, formula in template.items():
+                    if col in pasted_months:
+                        continue
+                    origin = f"{get_column_letter(col)}{template_row}"
+                    target = f"{get_column_letter(col)}{row}"
+                    ws.cell(row, col).value = Translator(formula, origin=origin).translate_formula(target)
 
-            for field, col in structure["descriptive_columns"].items():
-                ws.cell(excel_row, col).value = _s4number(
-                    _s4_tableau_value(tableau_row, field)
-                )
+            ws.cell(row, ft_col).value = forecast_type
+            for header, col in paste_columns.items():
+                ws.cell(row, col).value = _s4number(tableau_row.get(header))
+            for month, header in tableau_months.items():
+                value = _s4number(tableau_row.get(header))
+                # Existing rule (step 3 relies on it): Revenue workbooks hold
+                # the opposite sign of Tableau.
+                if revenue and isinstance(value, (int, float)) and not isinstance(value, bool):
+                    value = -value
+                ws.cell(row, month_cols[month]).value = value
 
-            for month in FISCAL_MONTH_ORDER:
-                col = structure["month_columns"][month]
-                header = tableau_months.get(month)
-                value = None if header is None else _s4number(tableau_row.get(header))
-                if (
-                    revenue
-                    and isinstance(value, (int, float))
-                    and not isinstance(value, bool)
-                ):
-                    value *= -1
-                ws.cell(excel_row, col).value = value
+            # A line with no Grand Total formula at all gets the usual one.
+            if ws.cell(row, gt_col).value in (None, ""):
+                refs = [f"{get_column_letter(month_cols[m])}{row}" for m in FISCAL_MONTH_ORDER]
+                ws.cell(row, gt_col).value = "=SUM(" + ",".join(refs) + ")"
 
-        total_row = _s4_finalize(ws, structure, fiscal_year, last)
+        # Bottom total row: same SUMs, re-pointed at the pasted lines.
+        total_row = last + 1
+        for col in (*month_cols.values(), gt_col):
+            letter = get_column_letter(col)
+            ws.cell(total_row, col).value = f"=SUM({letter}{first}:{letter}{last})"
+        all_cols = [ft_col, gt_col, *paste_columns.values(), *month_cols.values()]
+        _s4_total_border(ws, total_row, min(all_cols), max(all_cols))
+
         wb.save(workbook_path)
 
         return {
@@ -1159,6 +1262,7 @@ def populate_forecast_sheet_from_tableau_rows(
             "tableau_detail_rows": new_count,
             "excel_detail_rows": new_count,
             "old_excel_detail_rows": old_count,
+            "months_pasted": [MONTH_ABBR[m] for m in FISCAL_MONTH_ORDER if m in tableau_months],
             "forecast_type": forecast_type,
             "revenue_sign_rule": revenue,
             "total_row": total_row,

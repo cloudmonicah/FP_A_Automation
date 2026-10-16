@@ -331,6 +331,7 @@ def populate_monthly_forecast_from_tableau(
                     "worksheet": route["excel_sheet"],
                     "tableau_worksheet": route["tableau_worksheet"],
                     "rows": result.get("tableau_detail_rows", 0),
+                    "months_pasted": result.get("months_pasted", []),
                 }
             )
         except Exception as exc:
@@ -343,8 +344,15 @@ def populate_monthly_forecast_from_tableau(
                 }
             )
 
+    pasted = []
+    for item in passed:
+        for month in item.get("months_pasted", []):
+            if month not in pasted:
+                pasted.append(month)
+
     return {
         "period": period,
+        "months_pasted": ", ".join(pasted),
         "audit_workbook": str(audit_path),
         "passed": passed,
         "failed": failed,
