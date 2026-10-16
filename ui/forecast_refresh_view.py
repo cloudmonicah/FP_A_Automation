@@ -13,6 +13,7 @@ from shared.forecast_output_paths import (
 
 import ttkbootstrap as tb
 
+from automations.forecast.mapping import FORECAST_CATEGORIES, routes_for
 from automations.forecast.service import (
     build_forecast_period,
     populate_monthly_forecast_from_tableau,
@@ -204,20 +205,44 @@ class ForecastRefreshView(tb.Frame):
 
         self.prepare_button = tb.Button(
             panel,
-            text="1.  Generate Forecast & Open Tableau",
+            text="1.  Create Forecast Workbooks",
             bootstyle="success",
             command=self._start_prepare,
         )
         self.prepare_button.pack(fill="x", pady=(0, 5), ipady=2)
 
-        self.populate_button = tb.Button(
+        # Step 2 runs one category at a time.
+        tb.Label(
             panel,
-            text="2.  Update Workbooks from Tableau",
-            bootstyle="info",
-            command=self._start_population,
-            state="normal",
-        )
-        self.populate_button.pack(fill="x", pady=(0, 5), ipady=2)
+            text="2.  Update Workbooks from Tableau (one category at a time)",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(6, 3))
+        categories = tb.Frame(panel)
+        categories.pack(fill="x", pady=(0, 8))
+        self.populate_buttons = {}
+        self.category_status_vars = {}
+        for col, category in enumerate(FORECAST_CATEGORIES):
+            categories.columnconfigure(col, weight=1, uniform="categories")
+            sheets = len(routes_for([category]))
+            label = "Other (SAC, BTL)" if category == "Other" else category
+            button = tb.Button(
+                categories,
+                text=f"{label}\n{sheets} sheets",
+                bootstyle="info-outline",
+                command=lambda c=category: self._start_population(c),
+            )
+            button.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 4, 0))
+            self.populate_buttons[category] = button
+            status = tb.StringVar(value="Not run")
+            self.category_status_vars[category] = status
+            tb.Label(
+                categories,
+                textvariable=status,
+                bootstyle="secondary",
+                font=("Segoe UI", 8),
+                wraplength=120,
+                justify="center",
+            ).grid(row=1, column=col, pady=(3, 0))
 
         self.validate_button = tb.Button(
             panel,
@@ -526,11 +551,15 @@ class ForecastRefreshView(tb.Frame):
         output.mkdir(parents=True, exist_ok=True)
         return True
 
+    def _set_populate_state(self, state: str) -> None:
+        for button in self.populate_buttons.values():
+            button.configure(state=state)
+
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
         self.prepare_button.configure(state=state)
         if busy:
-            self.populate_button.configure(state="disabled")
+            self._set_populate_state("disabled")
             self.validate_button.configure(state="disabled")
 
     # =========================================================
@@ -543,20 +572,17 @@ class ForecastRefreshView(tb.Frame):
 
         period = self._period()
         confirmed = messagebox.askyesno(
-            "Run Monthly Forecast",
+            "Create Forecast Workbooks",
             (
-                f"Run the forecast for {period['display']}?\n\n"
+                f"Create the {period['display']} forecast workbooks?\n\n"
                 f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
                 f"Forecast Type: {period['forecast_type']}\n\n"
-                "These same period values will be used for Excel, "
-                "the consolidated Tableau workbook, and individual "
-                "Tableau validation."
+                "Each workbook is copied from last month's and given the new "
+                "Forecast Type. Tableau is not opened in this step."
             ),
             parent=self.winfo_toplevel(),
         )
         if not confirmed:
-            return
-        if not confirm_close_tableau(self):
             return
 
         # Read everything here, on the UI thread. The worker thread must not
@@ -572,8 +598,8 @@ class ForecastRefreshView(tb.Frame):
         self._set_busy(True)
         self.status_var.set("Preparing Monthly Forecast")
         self.status_description_var.set(
-            "Creating the new monthly workbooks and setting the "
-            "consolidated Tableau forecast period."
+            "Checking the consolidated Tableau workbook and creating the "
+            "new monthly workbooks."
         )
         self.progress_var.set(15)
 
@@ -594,7 +620,6 @@ class ForecastRefreshView(tb.Frame):
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
                 overwrite_mode=inputs["overwrite_mode"],
-                open_tableau=True,
             )
             self.after(0, lambda r=result: self._prepare_complete(r))
         except Exception as exc:
@@ -610,17 +635,17 @@ class ForecastRefreshView(tb.Frame):
         self.output_var.set(result["output_folder"])
         self.open_output_button.configure(state="normal")
 
-        self.progress_var.set(40)
-        self.status_var.set("Waiting for Tableau")
+        self.progress_var.set(33)
+        self.status_var.set("Forecast Workbooks Created")
         self.status_description_var.set(
-            f"Tableau is open for {period['display']}. "
-            f"Forecast Start = {period['forecast_start']:%m/%d/%Y}; "
-            f"Forecast Type = {period['forecast_type']}. "
-            "Allow Tableau to finish loading, then continue."
+            f"{period['display']} workbooks are ready. Next: step 2, one "
+            "category at a time."
         )
+        for status in self.category_status_vars.values():
+            status.set("Not run")
 
         self.prepare_button.configure(state="normal")
-        self.populate_button.configure(state="normal")
+        self._set_populate_state("normal")
         self.validate_button.configure(state="normal")
 
         failures = excel.get("failures") or []
@@ -652,8 +677,8 @@ class ForecastRefreshView(tb.Frame):
             f"Forecast Start: {period['forecast_start']:%m/%d/%Y}",
             f"Forecast Type: {period['forecast_type']}",
             "",
-            "Tableau is opening. Wait for it to finish loading and refreshing, then click:",
-            "2.  Update Workbooks from Tableau",
+            "Next: step 2. Click one category at a time (OPEX, Direct Cost, "
+            "Revenue, Other). The app opens Tableau itself.",
         ]
         (messagebox.showwarning if failures or older else messagebox.showinfo)(
             "Forecast Workbooks Created",
@@ -665,101 +690,139 @@ class ForecastRefreshView(tb.Frame):
     # STEP 2 - CONSOLIDATED TABLEAU -> EXCEL
     # =========================================================
 
-    def _start_population(self) -> None:
+    def _start_population(self, category: str) -> None:
         if not self._validate_inputs():
             return
-
         period = self._period()
+        sheets = len(routes_for([category]))
+        months = ", ".join(f"{m:%b}" for m in self._closed_month_dates(period)) or "none"
+
         confirmed = messagebox.askyesno(
             "Update Workbooks from Tableau",
             (
-                "Confirm the consolidated Tableau workbook is ready.\n\n"
-                f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
-                f"Forecast Type: {period['forecast_type']}\n\n"
-                "Continue with crosstab extraction and Excel population?"
+                f"Update the {category} workbooks ({sheets} sheets) for "
+                f"{period['display']}?\n\n"
+                f"Closed months copied from Tableau: {months}\n"
+                "Forecast months are kept as they are in each workbook.\n\n"
+                "The app opens a temporary copy of the consolidated Tableau "
+                "workbook, copies each tab, then closes it. Please don't use "
+                "the mouse or keyboard until it finishes."
             ),
             parent=self.winfo_toplevel(),
         )
         if not confirmed:
             return
+        if not confirm_close_tableau(self):
+            return
+
+        # Read everything on the UI thread; the worker must not touch Tk.
+        inputs = {
+            "period": period,
+            "category": category,
+            "output_folder": self.output_folder_var.get().strip(),
+            "tableau_workbook": self.tableau_workbook_var.get().strip(),
+        }
 
         self._set_busy(True)
-        self.status_var.set("Updating from Tableau")
+        self.category_status_vars[category].set("Running...")
+        self.status_var.set(f"Updating {category} from Tableau")
         self.status_description_var.set(
-            "Reading the mapped Tableau crosstabs and rebuilding "
-            "the monthly forecast workbooks."
+            f"Copying the {category} tabs from Tableau and updating the closed "
+            "months in the forecast workbooks."
         )
         self.progress_var.set(50)
 
         threading.Thread(
             target=self._run_population,
+            args=(inputs,),
             daemon=True,
         ).start()
 
-    def _run_population(self) -> None:
+    @staticmethod
+    def _closed_month_dates(period: dict) -> list:
+        from datetime import date
+
+        from automations.forecast.excel_service import closed_months
+
+        return [
+            date(year, month, 1)
+            for year, month in closed_months(period["fiscal_year"], period["forecast_month"])
+        ]
+
+    def _run_population(self, inputs: dict) -> None:
         try:
-            period = self._period()
+            period = inputs["period"]
             result = populate_monthly_forecast_from_tableau(
-                forecast_folder=self.output_folder_var.get().strip(),
-                tableau_workbook_path=self.tableau_workbook_var.get().strip(),
+                forecast_folder=inputs["output_folder"],
+                tableau_workbook_path=inputs["tableau_workbook"],
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
+                categories=[inputs["category"]],
             )
-            self.after(0, lambda r=result: self._population_complete(r))
+            self.after(0, lambda r=result, c=inputs["category"]: self._population_complete(c, r))
         except Exception as exc:
             log.exception("Error in %s", type(self).__name__)
-            self.after(0, lambda e=exc: self._process_failed(e))
+            self.after(0, lambda e=exc, c=inputs["category"]: self._population_failed(c, e))
 
-    def _population_complete(self, result: dict) -> None:
-        get_attention(self)
+    def _population_failed(self, category: str, error: Exception) -> None:
+        self.category_status_vars[category].set("Stopped - see message")
+        self._process_failed(error)
+
+    def _population_complete(self, category: str, result: dict) -> None:
         failed = result["failed"]
+        passed = result["passed"]
+        get_attention(self, success=not failed)
         self.worksheets_updated_var.set(str(result["worksheets_updated"]))
-        self.files_created_var.set(str(result["workbooks_updated"]))
-        self.progress_var.set(75)
+        self.progress_var.set(66)
 
-        if failed:
-            self.status_var.set("Population Completed with Exceptions")
-            self.status_description_var.set(
-                f"{result['routes_passed']} routes passed and "
-                f"{result['routes_failed']} had exceptions. "
-                "Continue to final validation; exceptions will be included "
-                "in the validation results."
-            )
-        else:
-            self.status_var.set("Forecast Workbooks Updated")
-            self.status_description_var.set(
-                f"All {result['routes_passed']} mapped Tableau routes "
-                "were written to the forecast workbooks. "
-                "Final individual Tableau validation is ready."
-            )
+        status = f"{len(passed)} updated" + (f", {len(failed)} not" if failed else "")
+        self.category_status_vars[category].set(status)
 
         self.prepare_button.configure(state="normal")
-        self.populate_button.configure(state="normal")
+        self._set_populate_state("normal")
         self.validate_button.configure(state="normal")
 
+        months = ", ".join(result.get("months_updated") or []) or "none"
+        added = sum(item.get("lines_added", 0) for item in passed)
+        no_actuals = sum(item.get("lines_without_actuals", 0) for item in passed)
+        gaps = [
+            f"  - {item['workbook']} / {item['worksheet']}: no {', '.join(item['months_missing_in_tableau'])} "
+            "column in Tableau (set to 0)"
+            for item in passed
+            if item.get("months_missing_in_tableau")
+        ]
+
+        lines = [
+            f"{category}: {len(passed)} of {len(passed) + len(failed)} sheets updated.",
+            f"Closed months copied from Tableau: {months}",
+            "Forecast months were kept as they were.",
+        ]
+        if added:
+            lines.append(f"New lines added from Tableau: {added} (forecast months left empty)")
+        if no_actuals:
+            lines.append(f"Lines with no actuals in Tableau: {no_actuals} (closed months cleared)")
+        if gaps:
+            lines += ["", "Check these:"] + gaps[:8]
         if failed:
-            lines = [
-                f"{item['workbook']} / {item['worksheet']}: {item['error']}"
-                for item in failed[:10]
-            ]
-            messagebox.showwarning(
-                "Forecast Population Completed with Exceptions",
-                "\n".join(lines),
-                parent=self.winfo_toplevel(),
-            )
+            lines += ["", "Not updated (left unchanged):"]
+            lines += [f"  - {item['workbook']} / {item['worksheet']}: {item['error']}" for item in failed[:10]]
+            if len(failed) > 10:
+                lines.append(f"  ...and {len(failed) - 10} more (see the log).")
+        if result.get("close_warning"):
+            lines += ["", f"Tableau: {result['close_warning']}"]
+
+        if failed:
+            self.status_var.set(f"{category}: Updated with Exceptions")
         else:
-            messagebox.showinfo(
-                "Forecast Population Complete",
-                (
-                    f"{result['workbooks_updated']} workbooks updated.\n"
-                    f"{result['worksheets_updated']} worksheets updated.\n\n"
-                    "Click '3.  Validate Final Forecast' to compare "
-                    "the completed Excel totals to the individual "
-                    "Tableau workbooks."
-                ),
-                parent=self.winfo_toplevel(),
-            )
+            self.status_var.set(f"{category}: Workbooks Updated")
+        self.status_description_var.set(lines[0])
+
+        (messagebox.showwarning if failed or gaps else messagebox.showinfo)(
+            f"Update from Tableau - {category}",
+            "\n".join(lines),
+            parent=self.winfo_toplevel(),
+        )
 
     # =========================================================
     # STEP 3 - INDIVIDUAL TABLEAU VALIDATION
@@ -849,7 +912,7 @@ class ForecastRefreshView(tb.Frame):
             )
 
         self.prepare_button.configure(state="normal")
-        self.populate_button.configure(state="normal")
+        self._set_populate_state("normal")
         self.validate_button.configure(state="normal")
 
         message = (
@@ -882,7 +945,7 @@ class ForecastRefreshView(tb.Frame):
         self.status_var.set("Process Failed")
         self.status_description_var.set(explain(error))
         self.prepare_button.configure(state="normal")
-        self.populate_button.configure(state="normal")
+        self._set_populate_state("normal")
         self.validate_button.configure(state="normal")
 
         messagebox.showerror(
@@ -904,7 +967,7 @@ class ForecastRefreshView(tb.Frame):
         self.action_required_var.set("0")
         self.output_var.set("Not created yet")
         self.open_output_button.configure(state="disabled")
-        self.populate_button.configure(state="normal")
+        self._set_populate_state("normal")
         self.validate_button.configure(state="normal")
         self.prepare_button.configure(state="normal")
         self.open_validation_button.configure(state="disabled")
