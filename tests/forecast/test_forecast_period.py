@@ -47,3 +47,11 @@ def test_step_2_opens_tableau_only_when_it_is_not_open(monkeypatch):
     monkeypatch.setattr(ts, "_get_tableau_window", not_open)
     service._make_sure_tableau_is_open("FY27.twb")
     assert opened == ["FY27.twb"] and waited == ["FY27.twb"]
+
+
+def test_every_route_has_a_category():
+    """A route without one stops the Forecast page from opening."""
+    from automations.forecast.mapping import FORECAST_CATEGORIES, FORECAST_ROUTES
+
+    missing = [r["tableau_worksheet"] for r in FORECAST_ROUTES if r.get("category") not in FORECAST_CATEGORIES]
+    assert missing == []
