@@ -44,6 +44,50 @@ _rule(
     lambda m, t: f"The Previous Forecast Folder was not found: {m.group('p').strip()}",
 )
 
+# --- Monthly Forecast, step 2 ----------------------------------------------
+_rule(
+    r'Excel (?:sheet|worksheet) "(?P<s>[^"]*)" (?:was )?not found',
+    lambda m, t: (
+        f'The forecast workbook has no sheet named "{m.group("s")}". It may have '
+        "been renamed; the forecast mapping expects this name."
+    ),
+)
+_rule(
+    r'Forecast Type header not found in "(?P<s>[^"]*)"|Forecast Type value not found in "(?P<s2>[^"]*)"',
+    lambda m, t: (
+        f'The sheet "{m.group("s") or m.group("s2")}" has no "Forecast Type" column '
+        "(or no rows under it), so it cannot be updated."
+    ),
+)
+_rule(
+    r'"(?P<s>[^"]*)" does not contain a complete Jul-Jun block',
+    lambda m, t: f'The sheet "{m.group("s")}" does not have all 12 month columns (Jul-Jun).',
+)
+_rule(
+    r'Grand Total column not found in "(?P<s>[^"]*)"',
+    lambda m, t: f'The sheet "{m.group("s")}" has no "Grand Total" column.',
+)
+_rule(
+    r"Audit sheet",
+    "The table copied from Tableau for this sheet could not be found in the "
+    "extract file. Run this category again.",
+)
+_rule(
+    r'Tableau parameter "Forecast Start" could not be located',
+    'The Tableau workbook has no "Forecast Start" parameter, so the month cannot '
+    "be set. Check that the FY Forecast Tableau workbook is selected.",
+)
+_rule(
+    r'Tableau "Crosstab" menu',
+    "Tableau did not respond when the table was copied. Make sure Tableau is "
+    "open, shows the report and has no pop-up window, then run again.",
+)
+_rule(
+    r"no Unicode text was available on the Windows clipboard",
+    "Tableau did not put the table on the clipboard. Check Tableau for a pop-up "
+    "message, close it, then run this category again.",
+)
+
 # --- Tableau ---------------------------------------------------------------
 _rule(
     r'Tableau "Copy" menu',

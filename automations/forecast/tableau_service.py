@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 import os
-import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -105,179 +104,58 @@ def set_forecast_start_parameter(
     forecast_month: int,
     forecast_year: int,
     parameter_caption: str = "Forecast Start",
+    *,
+    output_path: str | Path,
 ) -> date:
     """
-    Update Forecast Start in the Tableau TWB.
+    Write a copy of ``tableau_workbook_path`` to ``output_path`` with Forecast
+    Start set to the first day of the selected month, and verify it on disk.
 
-    Example:
+    The source workbook is only read. It is never written and no backup is
+    made beside it; ``output_path`` should come from
+    shared.tableau_temp_copies.temp_twb_path.
 
-        forecast_month = 8
-        forecast_year = 2026
-
-    Tableau screen:
-        8/1/2026
-
-    Tableau XML:
-        #2026-08-01#
+    Example: October 2026 -> Tableau shows 10/1/2026, XML holds #2026-10-01#.
     """
 
     workbook_path = Path(tableau_workbook_path)
-
-    # ========================================================
-    # VALIDATION
-    # ========================================================
+    output_path = Path(output_path)
 
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
-
     if workbook_path.suffix.lower() != ".twb":
-        raise ValueError("The Tableau forecast workbook must " "be a .twb file.")
-
+        raise ValueError("The Tableau forecast workbook must be a .twb file.")
+    if output_path.resolve() == workbook_path.resolve():
+        raise ValueError("Refusing to overwrite the source Tableau workbook.")
     if forecast_month not in range(1, 13):
         raise ValueError("Forecast month must be between 1 and 12.")
 
-    # ========================================================
-    # BUILD FORECAST START DATE
-    # ========================================================
-
-    forecast_start = date(
-        forecast_year,
-        forecast_month,
-        1,
-    )
-
-    # --------------------------------------------------------
-    # Tableau's internal representation of a DATE parameter.
-    #
-    # Example:
-    #     #2026-08-01#
-    # --------------------------------------------------------
+    forecast_start = date(forecast_year, forecast_month, 1)
     tableau_date_value = f"#{forecast_start:%Y-%m-%d}#"
 
-    # ========================================================
-    # BACKUP
-    # ========================================================
-    # Keep a backup while we are testing this automation.
-    # The original backup is not recreated on every run.
-    # ========================================================
-
-    from shared.tableau_temp_copies import tableau_temp_folder
-
-    backup_path = tableau_temp_folder() / (
-        f"{workbook_path.stem}" "_BEFORE_PARAMETER_AUTOMATION.twb"
-    )
-
-    if not backup_path.exists():
-
-        shutil.copy2(
-            workbook_path,
-            backup_path,
-        )
-
-        print("Tableau backup created:")
-
-        print(backup_path)
-
-    # ========================================================
-    # READ TABLEAU XML
-    # ========================================================
-
     tree = ET.parse(workbook_path)
-
-    root = tree.getroot()
-
-    # ========================================================
-    # FIND FORECAST START
-    # ========================================================
-
-    parameter = find_tableau_parameter(
-        root=root,
-        parameter_caption=parameter_caption,
-    )
-
+    parameter = find_tableau_parameter(tree.getroot(), parameter_caption)
     if parameter is None:
         raise RuntimeError(
-            f'Tableau parameter "{parameter_caption}" ' "could not be located."
+            f'Tableau parameter "{parameter_caption}" could not be located in '
+            f"{workbook_path.name}."
         )
-
-    # ========================================================
-    # SHOW CURRENT VALUE
-    # ========================================================
-
-    old_value = parameter.attrib.get("value")
-
-    print()
-    print("=" * 70)
-    print("TABLEAU FORECAST PARAMETER")
-    print("=" * 70)
-
-    print(f"Parameter     : {parameter_caption}")
-
-    print(f"Current value : {old_value}")
-
-    print(f"New value     : {tableau_date_value}")
-
-    # ========================================================
-    # UPDATE PARAMETER
-    # ========================================================
-
-    parameter.set(
-        "value",
-        tableau_date_value,
-    )
-
-    # ========================================================
-    # SAVE TABLEAU WORKBOOK
-    # ========================================================
-
-    tree.write(
-        workbook_path,
-        encoding="utf-8",
-        xml_declaration=True,
-    )
-
-    # ========================================================
-    # VERIFY THE SAVED VALUE
-    # ========================================================
-    # Re-open the file from disk instead of assuming that the
-    # previous write succeeded.
-    # ========================================================
-
-    verify_tree = ET.parse(workbook_path)
-
-    verify_root = verify_tree.getroot()
-
-    verify_parameter = find_tableau_parameter(
-        root=verify_root,
-        parameter_caption=parameter_caption,
-    )
-
-    if verify_parameter is None:
-        raise RuntimeError(
-            "Forecast Start disappeared during " "Tableau workbook verification."
-        )
-
-    saved_value = verify_parameter.attrib.get("value")
-
-    if saved_value != tableau_date_value:
-
-        raise RuntimeError(
-            "Forecast Start could not be verified.\n\n"
-            f"Expected: {tableau_date_value}\n"
-            f"Saved: {saved_value}"
-        )
-
-    print(f"Verified      : {saved_value}")
 
     print(
-        "Display value : "
-        f"{forecast_start.month}/"
-        f"{forecast_start.day}/"
-        f"{forecast_start.year}"
+        f"{parameter_caption}: {parameter.attrib.get('value')} -> "
+        f"{tableau_date_value} (copy: {output_path.name})"
     )
+    parameter.set("value", tableau_date_value)
+    tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
-    print("=" * 70)
-    print()
+    # Re-read from disk instead of assuming the write succeeded.
+    saved = find_tableau_parameter(ET.parse(output_path).getroot(), parameter_caption)
+    saved_value = None if saved is None else saved.attrib.get("value")
+    if saved_value != tableau_date_value:
+        raise RuntimeError(
+            "Forecast Start could not be verified.\n\n"
+            f"Expected: {tableau_date_value}\nSaved: {saved_value}"
+        )
 
     return forecast_start
 
@@ -671,6 +549,55 @@ def _get_tableau_window(
         f"{max_attempts} attempts. "
         "Tableau windows detected: " + "; ".join(last_titles)
     )
+
+
+def wait_for_tableau_workbook(
+    tableau_workbook_path: str | Path,
+    timeout_seconds: float = 240.0,
+    poll_seconds: float = 3.0,
+    settle_seconds: float = 3.0,
+    find_window=None,
+    sleep=time.sleep,
+    clock=time.monotonic,
+):
+    """Wait until Tableau has finished opening ``tableau_workbook_path``.
+
+    A workbook is ready when its window shows the Worksheet and Window menus
+    (the same test _get_tableau_window uses). Large workbooks can take a
+    minute or more, so this polls up to ``timeout_seconds`` instead of a
+    fixed sleep followed by three one-second checks, which is what produced
+    "workbook is not ready yet" on the first attempt.
+    """
+    find_window = find_window or (
+        lambda path: _get_tableau_window(
+            max_attempts=1,
+            retry_wait_seconds=0,
+            tableau_workbook_path=path,
+        )
+    )
+    name = Path(tableau_workbook_path).stem
+    deadline = clock() + timeout_seconds
+    last_error = None
+
+    while True:
+        try:
+            window = find_window(tableau_workbook_path)
+        except Exception as exc:
+            last_error = exc
+        else:
+            if settle_seconds:
+                sleep(settle_seconds)  # let the first view finish drawing
+            return window
+
+        if clock() >= deadline:
+            raise TimeoutError(
+                f'Tableau did not finish opening "{name}" within '
+                f"{int(timeout_seconds)} seconds. Check that Tableau Desktop "
+                "started, that no sign-in or error dialog is waiting, then run "
+                f"the step again. Last check: {last_error}"
+            )
+        print(f'Waiting for Tableau to finish opening "{name}"...')
+        sleep(poll_seconds)
 
 
 def _clear_clipboard() -> None:
@@ -2591,41 +2518,13 @@ def get_tableau_crosstab_text(
 # ============================================================
 
 
-def prepare_forecast_tableau_workbook(
-    tableau_workbook_path: str | Path,
-    forecast_month: int,
-    forecast_year: int,
-    tableau_exe: str | Path | None = None,
-    open_workbook: bool = True,
-) -> date:
-    """
-    Set and verify Forecast Start in the consolidated forecast TWB.
-
-    Opening Tableau is optional so the XML parameter update can be tested
-    independently without launching Tableau Desktop.
-    """
-    forecast_start = set_forecast_start_parameter(
-        tableau_workbook_path=tableau_workbook_path,
-        forecast_month=forecast_month,
-        forecast_year=forecast_year,
-    )
-
-    if open_workbook:
-        open_tableau_workbook(
-            tableau_workbook_path=tableau_workbook_path,
-            tableau_exe=tableau_exe,
-        )
-
-    return forecast_start
-
-
 def extract_forecast_worksheets(
     tableau_workbook_path: str | Path,
     worksheet_names,
     raw_output_folder: str | Path | None = None,
 ) -> dict[str, list[dict]]:
     """
-    Extract each unique consolidated Tableau worksheet exactly once.
+    Extract each unique worksheet of the already-open consolidated workbook.
 
     The returned dictionary is keyed by the original worksheet name.
     No Excel forecast workbook is modified here.
@@ -2635,14 +2534,9 @@ def extract_forecast_worksheets(
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
 
-    # Only one workbook open at a time: the automation finds Tableau's window
-    # by title, and leftover workbooks slow Tableau down and confuse that search.
-    from automations.actuals.tableau_desktop_close_service import (
-        close_all_tableau_workbooks,
-    )
-
-    close_all_tableau_workbooks()
-
+    # The workbook must already be open (open_tableau_workbook closes every
+    # other workbook first). Closing workbooks here closed the very workbook
+    # that was about to be read, so every worksheet failed.
     unique_names = []
     seen = set()
 
