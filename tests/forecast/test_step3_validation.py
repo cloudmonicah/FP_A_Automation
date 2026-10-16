@@ -104,7 +104,7 @@ def test_one_category_is_validated_and_the_report_keeps_the_others(tmp_path, mon
     categories = [row[header.index("Category")] for row in detail.iter_rows(min_row=2, values_only=True)]
     assert categories == ["OPEX", "Revenue"]  # OPEX kept after running Revenue
     summary = {row[0]: row[1] for row in report["Validation Summary"].iter_rows(values_only=True)}
-    assert summary["Forecast Start"] == datetime(2026, 9, 1)
+    assert summary["Forecast Start"] == datetime(2026, 10, 1)
     assert summary["Passed"] == 2
 
 
@@ -128,3 +128,10 @@ def test_company_filter_message_is_plain():
 
     text = friendly(ValueError('Expected one Company filter on individual forecast tab "Monthly Forecast".'))
     assert '"Monthly Forecast"' in text and "not validated" in text
+
+
+def test_grand_total_found_on_a_tab_without_a_company_column():
+    # Live run: ALIV Head Office's tab starts with "GL Account Mapping".
+    rows = [{"GL Account Mapping": "Salaries", "Grand Total": "10"},
+            {"GL Account Mapping": "Grand Total", "Grand Total": "1,234"}]
+    assert vs.get_individual_tableau_grand_total(rows) == 1234

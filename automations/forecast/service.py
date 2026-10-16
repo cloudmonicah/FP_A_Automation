@@ -10,6 +10,7 @@ from openpyxl import Workbook
 
 from .excel_service import (
     create_forecast_refresh,
+    forecast_type_for,
     populate_forecast_sheet_from_audit,
 )
 from .mapping import FORECAST_CATEGORIES, routes_for
@@ -45,10 +46,8 @@ MONTH_ABBR = {
 
 
 def default_forecast_start(forecast_month: int, forecast_year: int) -> date:
-    """The 1st of the month before the forecast month (October 2026 -> 9/1/2026)."""
-    if forecast_month == 1:
-        return date(forecast_year - 1, 12, 1)
-    return date(forecast_year, forecast_month - 1, 1)
+    """The 1st of the forecast month (October 2026 -> 10/1/2026); editable on the page."""
+    return date(forecast_year, forecast_month, 1)
 
 
 def build_forecast_period(
@@ -66,11 +65,12 @@ def build_forecast_period(
         raise ValueError("Fiscal year must look like FY27.")
 
     month_start = date(forecast_year, forecast_month, 1)
-    # Forecast Start is entered on the page; it defaults to the month before.
+    # Forecast Start is entered on the page; it defaults to the forecast month.
     start = forecast_start or default_forecast_start(forecast_month, forecast_year)
     if start.day != 1:
-        raise PlainLanguageError("Forecast Start must be the 1st of a month, for example 09/01/2026.")
-    forecast_type = f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
+        raise PlainLanguageError("Forecast Start must be the 1st of a month, for example 10/01/2026.")
+    # Forecast Type is the previous month's forecast (October -> FY27 Forecast_092026).
+    forecast_type = forecast_type_for(fiscal_year, forecast_month, forecast_year)
 
     return {
         "fiscal_year": fiscal_year,

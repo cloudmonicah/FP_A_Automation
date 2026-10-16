@@ -64,6 +64,12 @@ _rule(
     ),
 )
 
+_rule(
+    r'Individual Tableau crosstab does not contain a row where Company = "Grand Total"',
+    "The Tableau tab has no Grand Total row, so its total could not be read. "
+    "Turn on Grand Totals for that tab in Tableau.",
+)
+
 # --- Tableau ---------------------------------------------------------------
 _rule(
     r'Tableau "Copy" menu',

@@ -169,7 +169,7 @@ class ForecastRefreshView(tb.Frame):
         ):
             combo.bind("<<ComboboxSelected>>", self._month_changed)
 
-        # Defaults to the 1st of the month before; can be typed over (MM/DD/YYYY).
+        # Defaults to the 1st of the forecast month; can be typed over (MM/DD/YYYY).
         self.forecast_start_entry = tb.Entry(period, textvariable=self.forecast_start_var)
         self.forecast_start_entry.grid(row=1, column=3, sticky="ew", padx=(8, 0), pady=(2, 0))
         self.forecast_start_entry.bind("<FocusOut>", self._update_period_summary)
@@ -474,7 +474,7 @@ class ForecastRefreshView(tb.Frame):
             except ValueError:
                 pass
         raise PlainLanguageError(
-            f'Forecast Start "{text}" is not a date. Type it as MM/DD/YYYY, for example 09/01/2026.'
+            f'Forecast Start "{text}" is not a date. Type it as MM/DD/YYYY, for example 10/01/2026.'
         )
 
     def _period(self) -> dict:
@@ -494,7 +494,7 @@ class ForecastRefreshView(tb.Frame):
             return None
 
     def _month_changed(self, _event=None) -> None:
-        """A new month resets Forecast Start to the 1st of the month before."""
+        """A new month resets Forecast Start to the 1st of that month."""
         start = default_forecast_start(
             MONTH_LOOKUP[self.forecast_month_combo.get()],
             int(self.forecast_year_combo.get()),
