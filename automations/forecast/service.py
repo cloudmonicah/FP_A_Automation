@@ -12,7 +12,7 @@ from .excel_service import (
     create_forecast_refresh,
     populate_forecast_sheet_from_audit,
 )
-from .mapping import FORECAST_ROUTES
+from .mapping import FORECAST_CATEGORIES, FORECAST_ROUTES, routes_for
 from .tableau_service import (
     extract_forecast_worksheets,
     open_tableau_workbook,
@@ -56,7 +56,14 @@ def build_forecast_period(
     if not re.fullmatch(r"FY\d{2}", fiscal_year):
         raise ValueError("Fiscal year must look like FY27.")
 
-    start = date(forecast_year, forecast_month, 1)
+    month_start = date(forecast_year, forecast_month, 1)
+    # Forecast Start is the 1st of the month BEFORE the forecast month
+    # (October 2026 forecast -> 9/1/2026), so Tableau shows all 12 months.
+    start = date(
+        forecast_year if forecast_month > 1 else forecast_year - 1,
+        forecast_month - 1 if forecast_month > 1 else 12,
+        1,
+    )
     forecast_type = f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
 
     return {
@@ -67,7 +74,7 @@ def build_forecast_period(
         "forecast_start_tableau": f"#{start:%Y-%m-%d}#",
         "forecast_type": forecast_type,
         "target_month_abbr": MONTH_ABBR[forecast_month],
-        "display": f"{start:%B %Y}",
+        "display": f"{month_start:%B %Y}",
     }
 
 
@@ -94,8 +101,8 @@ def set_consolidated_forecast_period(
     # Proven Forecast Start updater + disk verification.
     set_forecast_start_parameter(
         tableau_workbook_path=path,
-        forecast_month=forecast_month,
-        forecast_year=forecast_year,
+        forecast_month=period["forecast_start"].month,
+        forecast_year=period["forecast_start"].year,
     )
 
     tree = ET.parse(path)
@@ -263,14 +270,35 @@ def _resolve_target_filename(
     return resolved
 
 
+def _make_sure_tableau_is_open(tableau_workbook_path) -> None:
+    """Open the consolidated workbook if step 1 didn't (or it was closed)."""
+    from .tableau_service import _get_tableau_window, wait_for_tableau_workbook
+
+    try:
+        _get_tableau_window(
+            max_attempts=1,
+            retry_wait_seconds=0,
+            tableau_workbook_path=tableau_workbook_path,
+        )
+        return
+    except Exception:
+        pass
+    print("The consolidated Tableau workbook is not open; opening it now...")
+    open_tableau_workbook(tableau_workbook_path=tableau_workbook_path)
+    wait_for_tableau_workbook(tableau_workbook_path)
+
+
 def populate_monthly_forecast_from_tableau(
     forecast_folder: str | Path,
     tableau_workbook_path: str | Path,
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    categories: list[str] | None = None,
 ) -> dict:
     """
+    Step 2 for one category (OPEX, Direct Cost, Revenue, Other) or all.
+
     Capture the consolidated Tableau crosstabs once and run the locked Stage 4
     population/finalization logic against every production mapping route.
     """
@@ -289,22 +317,28 @@ def populate_monthly_forecast_from_tableau(
         forecast_year=forecast_year,
     )
 
-    worksheet_names = [route["tableau_worksheet"] for route in FORECAST_ROUTES]
+    routes = routes_for(categories)
+    worksheet_names = [route["tableau_worksheet"] for route in routes]
+
+    _make_sure_tableau_is_open(tableau_workbook_path)
 
     extracts, extract_errors = extract_forecast_worksheets(
         tableau_workbook_path=tableau_workbook_path,
         worksheet_names=worksheet_names,
     )
 
+    # One extract file per category, so running Revenue never overwrites the
+    # OPEX extract.
+    tag = "All" if not categories else "_".join(c.replace(" ", "") for c in categories)
     audit_path = folder / (
-        f"Tableau_Forecast_Extract_" f"{forecast_year}-{forecast_month:02d}.xlsx"
+        f"Tableau_Forecast_Extract_{forecast_year}-{forecast_month:02d}_{tag}.xlsx"
     )
     write_tableau_audit_workbook(extracts, audit_path)
 
     passed = []
     failed = []
 
-    for route in FORECAST_ROUTES:
+    for route in routes:
         target_name = _resolve_target_filename(
             route["workbook"],
             period["target_month_abbr"],
@@ -331,6 +365,8 @@ def populate_monthly_forecast_from_tableau(
                     "worksheet": route["excel_sheet"],
                     "tableau_worksheet": route["tableau_worksheet"],
                     "rows": result.get("tableau_detail_rows", 0),
+                    "months_pasted": result.get("months_pasted", []),
+                    "months_blank_in_tableau": result.get("months_blank_in_tableau", []),
                 }
             )
         except Exception as exc:
@@ -343,8 +379,16 @@ def populate_monthly_forecast_from_tableau(
                 }
             )
 
+    pasted = []
+    for item in passed:
+        for month in item.get("months_pasted", []):
+            if month not in pasted:
+                pasted.append(month)
+
     return {
         "period": period,
+        "categories": list(categories or FORECAST_CATEGORIES),
+        "months_pasted": ", ".join(pasted),
         "audit_workbook": str(audit_path),
         "passed": passed,
         "failed": failed,

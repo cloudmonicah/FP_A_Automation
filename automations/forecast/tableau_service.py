@@ -673,6 +673,55 @@ def _get_tableau_window(
     )
 
 
+def wait_for_tableau_workbook(
+    tableau_workbook_path: str | Path,
+    timeout_seconds: float = 240.0,
+    poll_seconds: float = 3.0,
+    settle_seconds: float = 3.0,
+    find_window=None,
+    sleep=time.sleep,
+    clock=time.monotonic,
+):
+    """Wait until Tableau has finished opening ``tableau_workbook_path``.
+
+    A workbook is ready when its window shows the Worksheet and Window menus
+    (the same test _get_tableau_window uses). Large workbooks can take a
+    minute or more, so this polls up to ``timeout_seconds`` instead of a
+    fixed sleep followed by three one-second checks, which is what produced
+    "workbook is not ready yet" on the first attempt.
+    """
+    find_window = find_window or (
+        lambda path: _get_tableau_window(
+            max_attempts=1,
+            retry_wait_seconds=0,
+            tableau_workbook_path=path,
+        )
+    )
+    name = Path(tableau_workbook_path).stem
+    deadline = clock() + timeout_seconds
+    last_error = None
+
+    while True:
+        try:
+            window = find_window(tableau_workbook_path)
+        except Exception as exc:
+            last_error = exc
+        else:
+            if settle_seconds:
+                sleep(settle_seconds)  # let the first view finish drawing
+            return window
+
+        if clock() >= deadline:
+            raise TimeoutError(
+                f'Tableau did not finish opening "{name}" within '
+                f"{int(timeout_seconds)} seconds. Check that Tableau Desktop "
+                "started, that no sign-in or error dialog is waiting, then run "
+                f"the step again. Last check: {last_error}"
+            )
+        print(f'Waiting for Tableau to finish opening "{name}"...')
+        sleep(poll_seconds)
+
+
 def _clear_clipboard() -> None:
     """Empty the Windows clipboard with the native API.
 
@@ -2635,14 +2684,8 @@ def extract_forecast_worksheets(
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
 
-    # Only one workbook open at a time: the automation finds Tableau's window
-    # by title, and leftover workbooks slow Tableau down and confuse that search.
-    from automations.actuals.tableau_desktop_close_service import (
-        close_all_tableau_workbooks,
-    )
-
-    close_all_tableau_workbooks()
-
+    # Read the workbook step 1 opened. (This used to close every open Tableau
+    # workbook first - including this one - so every tab failed.)
     unique_names = []
     seen = set()
 
