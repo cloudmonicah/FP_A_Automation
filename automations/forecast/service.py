@@ -12,7 +12,7 @@ from .excel_service import (
     create_forecast_refresh,
     populate_forecast_sheet_from_audit,
 )
-from .mapping import FORECAST_CATEGORIES, FORECAST_ROUTES, routes_for
+from .mapping import FORECAST_CATEGORIES, routes_for
 from .tableau_service import (
     extract_forecast_worksheets,
     open_tableau_workbook,
@@ -23,6 +23,7 @@ from shared.forecast_output_paths import (
 )
 
 from shared.forecast_validation_report import (
+    merge_saved_results,
     write_forecast_validation_report,
 )
 from .validation_service import run_grouped_individual_validation
@@ -405,18 +406,19 @@ def validate_monthly_forecast(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
-    tolerance: float = 1000.00,
+    tolerance: float = 5.00,
+    categories: list[str] | None = None,
 ) -> dict:
+    """Step 3 for one category (OPEX, Direct Cost, Revenue, Other) or all.
 
+    The month's report keeps the latest results of every category: running
+    Revenue replaces Revenue's rows and leaves the other categories alone.
+    """
     period = build_forecast_period(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
     )
-
-    # ---------------------------------------------------------
-    # STACY VALIDATION OUTPUT LOCATION
-    # ---------------------------------------------------------
 
     validation_output_folder = get_forecast_validation_output_folder(
         fiscal_year=period["fiscal_year"],
@@ -425,41 +427,39 @@ def validate_monthly_forecast(
         create=True,
     )
 
-    # ---------------------------------------------------------
-    # RUN EXISTING STAGE 5 VALIDATION
-    # ---------------------------------------------------------
-
     result = run_grouped_individual_validation(
-        routes=FORECAST_ROUTES,
+        routes=routes_for(categories),
         forecast_folder=forecast_folder,
         target_month_abbr=period["target_month_abbr"],
         forecast_month=forecast_month,
         forecast_year=forecast_year,
         tolerance=tolerance,
+        forecast_start=period["forecast_start"],
+        forecast_type=period["forecast_type"],
     )
 
-    # ---------------------------------------------------------
-    # CREATE STACY VALIDATION WORKBOOK
-    # ---------------------------------------------------------
+    all_results = merge_saved_results(
+        output_folder=validation_output_folder,
+        forecast_month=period["forecast_month"],
+        forecast_year=period["forecast_year"],
+        forecast_type=period["forecast_type"],
+        categories_run=list(categories or FORECAST_CATEGORIES),
+        results=result["results"],
+    )
 
     report_path = write_forecast_validation_report(
-        validation_result=result,
+        validation_result={**result, "results": all_results},
         output_folder=validation_output_folder,
         fiscal_year=period["fiscal_year"],
         forecast_month=period["forecast_month"],
         forecast_year=period["forecast_year"],
         forecast_type=period["forecast_type"],
         tolerance=tolerance,
+        forecast_start=period["forecast_start"],
     )
 
-    # ---------------------------------------------------------
-    # RETURN EVERYTHING TO GUI
-    # ---------------------------------------------------------
-
+    result["categories"] = list(categories or FORECAST_CATEGORIES)
     result["period"] = period
-
     result["validation_output_folder"] = str(validation_output_folder)
-
     result["validation_report"] = str(report_path)
-
     return result
