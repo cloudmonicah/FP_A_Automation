@@ -3,15 +3,15 @@ from datetime import date
 from automations.forecast import service
 
 
-def test_forecast_start_is_the_first_of_the_month_before():
+def test_forecast_start_is_the_first_of_the_forecast_month():
     october = service.build_forecast_period("FY27", 10, 2026)
-    assert october["forecast_start"] == date(2026, 9, 1)
-    assert october["forecast_start_tableau"] == "#2026-09-01#"
+    assert october["forecast_start"] == date(2026, 10, 1)
+    assert october["forecast_start_tableau"] == "#2026-10-01#"
     assert october["forecast_type"] == "FY27 Forecast_102026"   # unchanged
     assert october["display"] == "October 2026"
 
     january = service.build_forecast_period("FY27", 1, 2027)
-    assert january["forecast_start"] == date(2026, 12, 1)
+    assert january["forecast_start"] == date(2027, 1, 1)
 
 
 def test_step_2_opens_tableau_only_when_it_is_not_open(monkeypatch):

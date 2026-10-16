@@ -675,8 +675,7 @@ def _prepare_individual_forecast_copy(
         )
 
     # Forecast Type comes from the selected forecast month (FY27
-    # Forecast_102026). It can't be worked out from Forecast Start, which is
-    # the month before.
+    # Forecast_102026).
     if forecast_type:
         forecast_type_value = str(forecast_type).strip()
     else:
@@ -942,7 +941,7 @@ def run_grouped_individual_validation(
     Stage 5B controlled runner.
 
     ``forecast_start`` / ``forecast_type`` come from the selected period
-    (October 2026 -> 9/1/2026 and FY27 Forecast_102026).
+    (October 2026 -> 10/1/2026 and FY27 Forecast_102026).
 
     The function name is retained for compatibility with the existing
     Stage 5B test. Internally V1 intentionally validates route-by-route

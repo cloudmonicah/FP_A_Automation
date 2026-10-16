@@ -57,14 +57,9 @@ def build_forecast_period(
     if not re.fullmatch(r"FY\d{2}", fiscal_year):
         raise ValueError("Fiscal year must look like FY27.")
 
-    month_start = date(forecast_year, forecast_month, 1)
-    # Forecast Start is the 1st of the month BEFORE the forecast month
-    # (October 2026 forecast -> 9/1/2026), so Tableau shows all 12 months.
-    start = date(
-        forecast_year if forecast_month > 1 else forecast_year - 1,
-        forecast_month - 1 if forecast_month > 1 else 12,
-        1,
-    )
+    # Forecast Start is the 1st of the forecast month (October 2026 -> 10/1/2026).
+    # Live run: 10/1 brought all 12 months from Tableau; 9/1 brought only Jul-Aug.
+    month_start = start = date(forecast_year, forecast_month, 1)
     forecast_type = f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
 
     return {
