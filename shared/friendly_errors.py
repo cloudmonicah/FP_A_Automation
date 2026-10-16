@@ -85,6 +85,14 @@ _rule(
     ),
 )
 _rule(
+    r"Expected one CBL (?P<area>Revenue|Direct Cost|OPEX) section start",
+    lambda m, t: (
+        f"The {m.group('area')} section could not be found in the CBL financial statement "
+        "(Financials tab). Check that the right month's statement is selected. "
+        "If it is, the statement layout may have changed; please send it to support."
+    ),
+)
+_rule(
     r"Worksheet not found: (?P<tab>.+)",
     lambda m, t: (
         f'The Tableau workbook does not contain a tab called "{m.group("tab").strip()}". '
