@@ -1071,6 +1071,10 @@ def read_tableau_audit_sheet(
         wb.close()
 
 
+class MissingFiscalMonthsError(PlainLanguageError, RuntimeError):
+    """The Tableau tab doesn't show all 12 fiscal months; nothing was pasted."""
+
+
 _MONTH_HEADER_FORMATS = ("%b-%y", "%B %Y", "%b %Y", "%b %y", "%Y-%m", "%m/%d/%Y")
 
 
@@ -1163,6 +1167,18 @@ def populate_forecast_sheet_from_tableau_rows(
         tableau_months = _tableau_month_columns(detail_rows, fiscal_year)
         if not tableau_months:
             raise RuntimeError("No Tableau fiscal month columns were found.")
+        # Every fiscal period must come over; a partial paste would leave the
+        # other months stale.
+        missing = [m for m in FISCAL_MONTH_ORDER if m not in tableau_months]
+        if missing:
+            shown = [MONTH_ABBR[m] for m in sorted(tableau_months, key=FISCAL_MONTH_ORDER.get)]
+            raise MissingFiscalMonthsError(
+                "The Tableau tab shows only "
+                f"{', '.join(shown)}; all 12 fiscal months (Jul-Jun) must be there. "
+                f"Missing: {', '.join(MONTH_ABBR[m] for m in sorted(missing, key=FISCAL_MONTH_ORDER.get))}. "
+                "The sheet was not changed. In Tableau, check the tab's Forecast "
+                "Type filter and the Forecast Start parameter."
+            )
 
         # Every other Tableau column goes to the Excel column with the same
         # header (or a known alias, e.g. "Bus Code Name" = "GL Business Code").

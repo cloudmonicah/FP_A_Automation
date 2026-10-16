@@ -29,10 +29,13 @@ def _sheet(path, lines):
     return path
 
 
-def _row(code, desc, jul, aug, sep):
-    """A line as Tableau copies it (live run: only Jul-26, Aug-26, Sep-26)."""
+LATER = ["Oct-26", "Nov-26", "Dec-26", "Jan-27", "Feb-27", "Mar-27", "Apr-27", "May-27", "Jun-27"]
+
+
+def _row(code, desc, jul, aug, sep, later="9"):
+    """A line as Tableau copies it, with all 12 fiscal months."""
     return {"GL Business Code": "LEGAL", "GL Sub Segment code": code, "GL Sub Account Description": desc,
-            "Jul-26": jul, "Aug-26": aug, "Sep-26": sep, "Grand Total": "999"}
+            "Jul-26": jul, "Aug-26": aug, "Sep-26": sep, **{m: later for m in LATER}, "Grand Total": "999"}
 
 
 def test_tableau_values_are_pasted_and_formulas_stay(tmp_path):
@@ -42,7 +45,7 @@ def test_tableau_values_are_pasted_and_formulas_stay(tmp_path):
 
     ws = load_workbook(path)["ALIV"]
     assert [ws.cell(3, c).value for c in (4, 5, 6)] == [1000, 2000, -300]   # pasted as Tableau shows
-    assert ws.cell(3, 7).value == "=AVERAGE(D3:F3)"                        # forecast formula kept
+    assert [ws.cell(3, c).value for c in range(7, 16)] == [9] * 9            # all 12 periods present
     assert ws.cell(3, 16).value == "=SUM(D3:O3)"                           # row total formula kept
     assert ws.cell(2, 5).value == "=EDATE(D2,1)"                           # header formulas kept
     assert ws.cell(5, 4).value == "=SUM(D3:D4)"                            # bottom total
@@ -55,7 +58,7 @@ def test_extra_tableau_lines_get_the_formulas_filled_down(tmp_path):
 
     ws = load_workbook(path)["ALIV"]
     assert [ws.cell(4, c).value for c in (1, 2, 3, 4, 5, 6)] == [OCT, 6200, "Training", 4, 5, 6]
-    assert ws.cell(4, 7).value == "=AVERAGE(D4:F4)"   # filled down, pointing at its own row
+    assert [ws.cell(4, c).value for c in range(7, 16)] == [9] * 9
     assert ws.cell(4, 16).value == "=SUM(D4:O4)"
     assert ws.cell(5, 4).value == "=SUM(D3:D4)"       # total now covers the added line
     assert ws.cell(5, 16).value == "=SUM(P3:P4)"
@@ -83,3 +86,19 @@ def test_month_from_another_fiscal_year_is_not_pasted(tmp_path):
     row["Jul-27"] = "777"  # FY28 - must not land in Jul 2026
     populate_forecast_sheet_from_tableau_rows(path, "ALIV", [row], "FY27")
     assert load_workbook(path)["ALIV"].cell(3, 4).value == 1
+
+
+def test_tableau_tab_missing_months_leaves_the_sheet_unchanged(tmp_path):
+    import pytest
+
+    from automations.forecast.excel_service import MissingFiscalMonthsError
+    from shared.friendly_errors import friendly
+
+    path = _sheet(tmp_path / "FY27 OPEX Legal_Oct Forecast.xlsx", [(6000, "Salaries")])
+    before = path.read_bytes()
+    row = {k: v for k, v in _row("6000", "Salaries", "1", "2", "3").items() if k not in LATER}  # like the live run
+    with pytest.raises(MissingFiscalMonthsError) as error:
+        populate_forecast_sheet_from_tableau_rows(path, "ALIV", [row], "FY27")
+    assert path.read_bytes() == before
+    message = friendly(error.value)
+    assert "shows only Jul, Aug, Sep" in message and "Missing: Oct, Nov, Dec, Jan, Feb, Mar, Apr, May, Jun" in message

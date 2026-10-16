@@ -12,7 +12,7 @@ from .excel_service import (
     create_forecast_refresh,
     populate_forecast_sheet_from_audit,
 )
-from .mapping import FORECAST_ROUTES
+from .mapping import FORECAST_CATEGORIES, FORECAST_ROUTES, routes_for
 from .tableau_service import (
     extract_forecast_worksheets,
     open_tableau_workbook,
@@ -269,8 +269,11 @@ def populate_monthly_forecast_from_tableau(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    categories: list[str] | None = None,
 ) -> dict:
     """
+    Step 2 for one category (OPEX, Direct Cost, Revenue, Other) or all.
+
     Capture the consolidated Tableau crosstabs once and run the locked Stage 4
     population/finalization logic against every production mapping route.
     """
@@ -289,22 +292,26 @@ def populate_monthly_forecast_from_tableau(
         forecast_year=forecast_year,
     )
 
-    worksheet_names = [route["tableau_worksheet"] for route in FORECAST_ROUTES]
+    routes = routes_for(categories)
+    worksheet_names = [route["tableau_worksheet"] for route in routes]
 
     extracts, extract_errors = extract_forecast_worksheets(
         tableau_workbook_path=tableau_workbook_path,
         worksheet_names=worksheet_names,
     )
 
+    # One extract file per category, so running Revenue never overwrites the
+    # OPEX extract.
+    tag = "All" if not categories else "_".join(c.replace(" ", "") for c in categories)
     audit_path = folder / (
-        f"Tableau_Forecast_Extract_" f"{forecast_year}-{forecast_month:02d}.xlsx"
+        f"Tableau_Forecast_Extract_{forecast_year}-{forecast_month:02d}_{tag}.xlsx"
     )
     write_tableau_audit_workbook(extracts, audit_path)
 
     passed = []
     failed = []
 
-    for route in FORECAST_ROUTES:
+    for route in routes:
         target_name = _resolve_target_filename(
             route["workbook"],
             period["target_month_abbr"],
@@ -352,6 +359,7 @@ def populate_monthly_forecast_from_tableau(
 
     return {
         "period": period,
+        "categories": list(categories or FORECAST_CATEGORIES),
         "months_pasted": ", ".join(pasted),
         "audit_workbook": str(audit_path),
         "passed": passed,
