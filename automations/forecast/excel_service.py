@@ -691,6 +691,7 @@ TABLEAU_ALIASES = {
         "account description",
         "description",
     },
+    "vendor": {"vendor name", "vendor"},
 }
 
 EXCEL_ALIASES = TABLEAU_ALIASES
@@ -1178,3 +1179,237 @@ def populate_forecast_sheet_from_audit(
     return populate_forecast_sheet_from_tableau_rows(
         workbook_path, excel_sheet_name, rows, fiscal_year
     )
+
+
+# ============================================================
+# STEP 2 - UPDATE THE CLOSED MONTHS, KEEP THE FORECAST MONTHS
+# ============================================================
+#
+# The month's workbook was copied from last month's (step 1), so it already
+# holds each department's forecast. Tableau only has actuals for the months
+# that have closed (for October: Jul, Aug, Sep). Step 2 therefore:
+#
+#   * writes the closed months from Tableau (the just-closed month's actual
+#     replaces its forecast),
+#   * leaves the forecast months (Oct-Jun) exactly as they are,
+#   * matches lines on the account columns, adds lines that are new in
+#     Tableau, and keeps lines Tableau no longer has (their closed months
+#     are cleared: no actuals were posted).
+
+
+class ActualsUpdateError(PlainLanguageError, RuntimeError):
+    """The sheet could not be updated safely; it was left unchanged."""
+
+
+_MONTH_FORMATS = (
+    "%b-%y", "%B %Y", "%b %Y", "%B-%Y", "%b-%Y", "%b %y",
+    "%Y-%m", "%Y-%m-%d", "%m/%d/%Y", "%m/%Y",
+)
+
+
+def _month_year(value: Any) -> tuple[int | None, int] | None:
+    """(year, month) of a month column header; year None if it has none."""
+    if hasattr(value, "month") and hasattr(value, "year"):
+        return int(value.year), int(value.month)
+    text = " ".join(str(value or "").split())
+    if not text or text.startswith("="):
+        return None
+    for fmt in _MONTH_FORMATS:
+        try:
+            parsed = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        return parsed.year, parsed.month
+    month = _s4_month(text)
+    return (None, month) if month else None
+
+
+def closed_months(fiscal_year: str, forecast_month: int) -> list[tuple[int, int]]:
+    """(year, month) of the months before the forecast month, July first.
+
+    FY27 / October -> [(2026, 7), (2026, 8), (2026, 9)].
+    """
+    match = re.search(r"(\d{2,4})", str(fiscal_year))
+    if not match:
+        raise ValueError(f"Invalid fiscal year: {fiscal_year}")
+    end = int(match.group(1))
+    end = end + 2000 if end < 100 else end
+    months = sorted(FISCAL_MONTH_ORDER, key=FISCAL_MONTH_ORDER.get)
+    position = FISCAL_MONTH_ORDER[forecast_month]
+    return [(end - 1 if m >= 7 else end, m) for m in months if FISCAL_MONTH_ORDER[m] < position]
+
+
+def _key_part(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return " ".join(str(value if value is not None else "").strip().lower().split())
+
+
+def _find_sheet(wb, name: str):
+    if name in wb.sheetnames:
+        return wb[name]
+    wanted = re.sub(r"[^a-z0-9]+", "", name.lower())
+    matches = [s for s in wb.worksheets if re.sub(r"[^a-z0-9]+", "", s.title.lower()) == wanted]
+    if len(matches) != 1:
+        raise RuntimeError(f'Excel sheet "{name}" not found. Available: {wb.sheetnames}')
+    return matches[0]
+
+
+def update_actual_months(
+    workbook_path: str | Path,
+    excel_sheet_name: str,
+    tableau_rows: list[dict],
+    fiscal_year: str,
+    forecast_month: int,
+    expected_forecast_type: str,
+) -> dict:
+    """Write the closed months from Tableau into one forecast sheet.
+
+    Forecast months are never touched. Raises ActualsUpdateError (sheet left
+    unchanged) when the sheet is for another month or lines can't be matched.
+    """
+    workbook_path = Path(workbook_path)
+    wb = load_workbook(workbook_path, data_only=False)
+    try:
+        ws = _find_sheet(wb, excel_sheet_name)
+        label = f"{workbook_path.name} / {ws.title}"
+        structure = _s4_structure(ws)
+
+        sheet_type = str(_s4_forecast_type(ws, structure)).strip()
+        if _s4norm(sheet_type) != _s4norm(expected_forecast_type):
+            raise ActualsUpdateError(
+                f"{label} is for {sheet_type}, not {expected_forecast_type}. It was "
+                "not changed. If step 1 kept it because it already existed, run "
+                'step 1 again with Existing Files = "replace".'
+            )
+
+        fields = list(structure["descriptive_columns"])
+        if not fields:
+            raise ActualsUpdateError(
+                f"{label} has no account columns (GL Account, Sub Segment, "
+                "Description...) to match lines on. It was not changed."
+            )
+
+        # Tableau column for each closed month (by month and year).
+        wanted = closed_months(fiscal_year, forecast_month)
+        tableau_detail = _s4_detail_rows(tableau_rows)
+        columns = {}
+        for header in (tableau_rows[0].keys() if tableau_rows else []):
+            parsed = _month_year(header)
+            if parsed is None:
+                continue
+            year, month = parsed
+            for want_year, want_month in wanted:
+                if month == want_month and year in (None, want_year):
+                    columns[(want_year, want_month)] = header
+        missing = [f"{calendar.month_abbr[m]} {y}" for y, m in wanted if (y, m) not in columns]
+
+        revenue = "revenue" in workbook_path.name.lower()
+
+        def tableau_value(row, ym):
+            header = columns.get(ym)
+            value = None if header is None else _s4number(row.get(header))
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return 0
+            return -value if revenue else value
+
+        # Group Tableau lines by account key; split lines (e.g. by vendor when
+        # the sheet has no vendor column) are added together.
+        tableau_groups: dict[tuple, list[dict]] = {}
+        for row in tableau_detail:
+            key = tuple(_key_part(_s4_tableau_value(row, field)) for field in fields)
+            tableau_groups.setdefault(key, []).append(row)
+
+        first, last = _s4_current_detail(ws, structure)
+        excel_rows: dict[tuple, list[int]] = {}
+        for r in range(first, last + 1):
+            if ws.cell(r, structure["forecast_type_column"]).value in (None, ""):
+                continue
+            key = tuple(
+                _key_part(ws.cell(r, structure["descriptive_columns"][field]).value)
+                for field in fields
+            )
+            excel_rows.setdefault(key, []).append(r)
+
+        month_cols = structure["month_columns"]
+        updates: dict[int, dict[int, Any]] = {}
+        for key, rows in excel_rows.items():
+            group = tableau_groups.get(key, [])
+            if len(rows) == 1:
+                updates[rows[0]] = {
+                    m: sum(tableau_value(t, (y, m)) for t in group) if group else None
+                    for y, m in wanted
+                }
+            elif len(rows) == len(group):
+                for r, t in zip(rows, group):
+                    updates[r] = {m: tableau_value(t, (y, m)) for y, m in wanted}
+            elif not group:
+                for r in rows:
+                    updates[r] = {m: None for _, m in wanted}
+            else:
+                shown = " / ".join(part for part in key if part)
+                raise ActualsUpdateError(
+                    f"{label}: the line \"{shown}\" appears {len(rows)} times in Excel "
+                    f"and {len(group)} times in Tableau, so the actuals can't be "
+                    "matched. It was not changed."
+                )
+
+        new_keys = [key for key in tableau_groups if key not in excel_rows]
+
+        # --- write (nothing above changed the sheet) ---------------------
+        for r, values in updates.items():
+            for m, value in values.items():
+                ws.cell(r, month_cols[m]).value = value
+
+        if new_keys:
+            style_row = last if last >= first else structure["header_row"]
+            styles = {c: ws.cell(style_row, c) for c in range(1, ws.max_column + 1)}
+            ws.insert_rows(last + 1, amount=len(new_keys))
+            for offset, key in enumerate(new_keys):
+                r = last + 1 + offset
+                for c, source in styles.items():
+                    _s4_copy_style(source, ws.cell(r, c))
+                ws.cell(r, structure["forecast_type_column"]).value = sheet_type
+                sample = tableau_groups[key][0]
+                for field, c in structure["descriptive_columns"].items():
+                    ws.cell(r, c).value = _s4number(_s4_tableau_value(sample, field))
+                for y, m in wanted:
+                    ws.cell(r, month_cols[m]).value = sum(
+                        tableau_value(t, (y, m)) for t in tableau_groups[key]
+                    )
+                for m, c in month_cols.items():
+                    if (FISCAL_MONTH_ORDER[m] >= FISCAL_MONTH_ORDER[forecast_month]):
+                        ws.cell(r, c).value = None
+            last += len(new_keys)
+
+        _s4_finalize(ws, structure, fiscal_year, last)
+        wb.save(workbook_path)
+
+        cleared = sum(1 for key, rows in excel_rows.items() if key not in tableau_groups for _ in rows)
+        return {
+            "workbook": str(workbook_path),
+            "worksheet": ws.title,
+            "months_updated": [f"{calendar.month_abbr[m]} {y}" for y, m in wanted],
+            "months_missing_in_tableau": missing,
+            "lines_updated": len(updates) - cleared,
+            "lines_added": len(new_keys),
+            "lines_without_actuals": cleared,
+        }
+    finally:
+        wb.close()
+
+
+def update_actual_months_from_audit(
+    workbook_path: str | Path,
+    excel_sheet_name: str,
+    audit_workbook_path: str | Path,
+    tableau_worksheet_name: str,
+    fiscal_year: str,
+    forecast_month: int,
+    expected_forecast_type: str,
+) -> dict:
+    rows = read_tableau_audit_sheet(audit_workbook_path, tableau_worksheet_name)
+    return update_actual_months(
+        workbook_path, excel_sheet_name, rows, fiscal_year, forecast_month, expected_forecast_type
+    )
+
