@@ -44,6 +44,16 @@ _rule(
     lambda m, t: f"The Previous Forecast Folder was not found: {m.group('p').strip()}",
 )
 
+# --- Monthly Forecast, step 2 ----------------------------------------------
+_rule(
+    r'Excel (?:work)?sheet "(?P<sheet>[^"]+)" (?:was )?not found\. Available(?: sheets)?: (?P<have>\[.*?\])',
+    lambda m, t: (
+        f'The forecast workbook has no tab called "{m.group("sheet")}" '
+        f"(its tabs are {m.group('have')}). The tab may have been renamed; "
+        "the sheet name in the mapping needs to match it."
+    ),
+)
+
 # --- Monthly Forecast, step 3 ----------------------------------------------
 _rule(
     r'Expected one Company filter on individual forecast tab "(?P<tab>[^"]+)"',
