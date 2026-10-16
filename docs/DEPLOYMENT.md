@@ -7,7 +7,7 @@
 | Windows 10 or 11 | The Tableau steps drive Tableau Desktop through Windows UI Automation. |
 | Tableau Desktop installed, licensed and signed in, the same version as yours | The app opens `.twb` files with whatever program Windows associates with them, then reads Tableau's windows. A different version can change window and menu names. |
 | `.twb` files open in Tableau Desktop when double-clicked | Same reason. |
-| Read access to the shared Tableau workbooks folder | Set as `workbooks_root` in Settings. |
+| Read access to the shared Tableau workbooks folder | Set as `workbooks_root` in `settings.json`. |
 | Read access to the financial statements | They pick these in the app each month. |
 | Write access to the validation output folder | Reports are saved there. |
 | Excel | Only to open the reports. Close a report in Excel before re-running that validation, or Windows will block the save. |
@@ -60,7 +60,7 @@ Settings are layered, later ones win:
 
 1. Built-in defaults (`shared/settings.py`).
 2. `settings.json` next to `FPA Automation.exe`: the team defaults you ship.
-3. `%APPDATA%\FPA Automation\settings.json`: one person's own changes, made on the app's **Settings** page.
+3. `%APPDATA%\FPA Automation\settings.json`: one person's own changes (optional; edit it by hand, same format).
 
 | Setting | Meaning |
 | --- | --- |
@@ -75,7 +75,7 @@ Folder changes take effect after restarting the app.
 
 ## When something goes wrong
 
-Every run writes to `%APPDATA%\FPA Automation\logs\fpa_automation.log`. The Settings page has an **Open log folder** button. Ask colleagues to send you that file along with a description of what they clicked.
+Every run writes to `%APPDATA%\FPA Automation\logs\fpa_automation.log`. To open it, paste `%APPDATA%\FPA Automation\logs` into the File Explorer address bar. Ask colleagues to send you that file along with a description of what they clicked.
 
 ## Before the first release
 

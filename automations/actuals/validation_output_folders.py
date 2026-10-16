@@ -223,8 +223,8 @@ def find_actuals_validation_results_folder() -> Path:
     if configured is not None:
         if not configured.is_dir():
             raise FileNotFoundError(
-                "The validation output folder in Settings was not found:\n"
-                f"{configured}\n\nCheck the shared drive is connected, or update Settings."
+                "The validation output folder set in settings.json was not found:\n"
+                f"{configured}\n\nCheck the shared drive is connected, or update settings.json."
             )
         return configured
 

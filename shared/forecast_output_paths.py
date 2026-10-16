@@ -15,7 +15,7 @@ def get_forecast_validation_output_folder(
     forecast_year: int,
     create: bool = False,
 ) -> Path:
-    """Resolve the forecast validation folder (Settings, else the synced OneDrive shortcut)."""
+    """Resolve the forecast validation folder (settings.json, else the synced OneDrive shortcut)."""
     fiscal_year = str(fiscal_year).strip().upper()
     period = date(int(forecast_year), int(forecast_month), 1)
 
@@ -45,7 +45,7 @@ def get_forecast_validation_output_folder(
                 "The forecast validation folder was not found.\n\n"
                 f"Expected:\n{validation_root}\n\n"
                 "Make sure the shared folder is available and synced, "
-                "or set the folder in Settings."
+                "or set the folder in settings.json."
             )
         output_folder.mkdir(parents=True, exist_ok=True)
 
