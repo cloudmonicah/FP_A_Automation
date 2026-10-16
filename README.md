@@ -16,8 +16,7 @@ pip install -r requirements.txt
 
 The Tableau automation needs Windows with Tableau Desktop installed.
 
-Copy `settings.example.json` to `settings.json` and set the shared-drive folders,
-or set them later on the app's Settings page.
+Copy `settings.example.json` to `settings.json` and set the shared-drive folders.
 
 ## Run the app
 

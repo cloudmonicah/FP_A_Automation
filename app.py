@@ -16,7 +16,6 @@ from config import (
 from ui.forecast_refresh_view import ForecastRefreshView
 from ui.actuals_validation_view import ActualsValidationView
 from ui.budget_setup_view import BudgetSetupView
-from ui.settings_view import SettingsView
 from shared.logging_setup import log_file
 
 log = logging.getLogger(__name__)
@@ -94,7 +93,6 @@ class FinanceAutomationApp:
             ("forecast", "Monthly Forecast"),
             ("actuals", "Actuals Validation"),
             ("budget", "Initial Budget Setup"),
-            ("settings", "Settings"),
         ]
 
         for key, label in pages:
@@ -138,7 +136,6 @@ class FinanceAutomationApp:
             "forecast": ForecastRefreshView,
             "actuals": ActualsValidationView,
             "budget": BudgetSetupView,
-            "settings": SettingsView,
         }
 
         view_class = views[page]

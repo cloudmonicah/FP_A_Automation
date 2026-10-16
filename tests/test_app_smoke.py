@@ -35,7 +35,7 @@ def test_every_page_opens(app):
     errors = []
     app._report_error = lambda *exc: errors.append(exc)
     app.app.report_callback_exception = app._report_error
-    for page in ("actuals", "budget", "settings", "forecast"):
+    for page in ("actuals", "budget", "forecast"):
         app.show_page(page)
         app.app.update()
         assert app.current_page == page
