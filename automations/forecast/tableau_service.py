@@ -2635,14 +2635,8 @@ def extract_forecast_worksheets(
     if not workbook_path.exists():
         raise FileNotFoundError("Tableau workbook was not found:\n" f"{workbook_path}")
 
-    # Only one workbook open at a time: the automation finds Tableau's window
-    # by title, and leftover workbooks slow Tableau down and confuse that search.
-    from automations.actuals.tableau_desktop_close_service import (
-        close_all_tableau_workbooks,
-    )
-
-    close_all_tableau_workbooks()
-
+    # Read the workbook step 1 opened. (This used to close every open Tableau
+    # workbook first - including this one - so every tab failed.)
     unique_names = []
     seen = set()
 
