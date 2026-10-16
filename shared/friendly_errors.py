@@ -44,6 +44,16 @@ _rule(
     lambda m, t: f"The Previous Forecast Folder was not found: {m.group('p').strip()}",
 )
 
+# --- Monthly Forecast, step 3 ----------------------------------------------
+_rule(
+    r'Expected one Company filter on individual forecast tab "(?P<tab>[^"]+)"',
+    lambda m, t: (
+        f'The Tableau tab "{m.group("tab")}" does not have exactly one Company '
+        "filter, so it can't be set to the right company. This line was not "
+        "validated. Check the Company filter on that tab."
+    ),
+)
+
 # --- Tableau ---------------------------------------------------------------
 _rule(
     r'Tableau "Copy" menu',

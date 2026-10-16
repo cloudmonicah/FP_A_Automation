@@ -106,3 +106,25 @@ def test_one_category_is_validated_and_the_report_keeps_the_others(tmp_path, mon
     summary = {row[0]: row[1] for row in report["Validation Summary"].iter_rows(values_only=True)}
     assert summary["Forecast Start"] == datetime(2026, 9, 1)
     assert summary["Passed"] == 2
+
+
+def test_results_saved_by_an_earlier_version_are_read(tmp_path):
+    """Live run: a .results.json from the earlier category branch crashed the report."""
+    import json
+
+    from shared.forecast_validation_report import merge_saved_results
+
+    old = {"forecast_type": "FY27 Forecast_102026", "categories": {
+        "OPEX": {"validated_at": "2026-10-15 18:00", "results": [{"status": "PASS", "category": "OPEX"}]},
+    }}
+    (tmp_path / "Forecast_Validation_Oct_2026.results.json").write_text(json.dumps(old), encoding="utf-8")
+    new = [{"status": "ACTION REQUIRED", "category": "Direct Cost"}]
+    merged = merge_saved_results(tmp_path, 10, 2026, "FY27 Forecast_102026", ["Direct Cost"], new)
+    assert [(r["category"], r["status"]) for r in merged] == [("OPEX", "PASS"), ("Direct Cost", "ACTION REQUIRED")]
+
+
+def test_company_filter_message_is_plain():
+    from shared.friendly_errors import friendly
+
+    text = friendly(ValueError('Expected one Company filter on individual forecast tab "Monthly Forecast".'))
+    assert '"Monthly Forecast"' in text and "not validated" in text

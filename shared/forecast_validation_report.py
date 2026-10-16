@@ -38,7 +38,12 @@ def merge_saved_results(
     try:
         data = json.loads(store_path.read_text(encoding="utf-8"))
         if data.get("forecast_type") == forecast_type and isinstance(data.get("categories"), dict):
-            saved = data["categories"]
+            for category, rows in data["categories"].items():
+                # An earlier version saved {"validated_at": ..., "results": [...]}.
+                if isinstance(rows, dict):
+                    rows = rows.get("results")
+                if isinstance(rows, list):
+                    saved[category] = [row for row in rows if isinstance(row, dict)]
     except (OSError, ValueError, AttributeError):
         pass
 
