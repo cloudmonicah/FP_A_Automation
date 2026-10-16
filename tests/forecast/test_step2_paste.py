@@ -96,3 +96,17 @@ def test_months_the_tableau_tab_leaves_out_are_pasted_blank(tmp_path):
     ws = load_workbook(path)["ALIV"]
     assert [ws.cell(3, c).value for c in range(4, 16)] == [None, None, None] + [9] * 9
     assert result["months_blank_in_tableau"] == ["Jul", "Aug", "Sep"]
+
+
+def test_missing_sheet_message_is_plain():
+    from shared.friendly_errors import friendly
+
+    text = friendly(RuntimeError('Excel sheet "Media" not found. Available: [\'Media (MARKETING)\']'))
+    assert '"Media"' in text and "Media (MARKETING)" in text and "unexpected" not in text
+
+
+def test_media_marketing_route_uses_the_real_tab_name():
+    from automations.forecast.mapping import FORECAST_ROUTES
+
+    route = next(r for r in FORECAST_ROUTES if r["tableau_worksheet"] == "MEDIA (MARKETING)")
+    assert route["excel_sheet"] == "Media (MARKETING)"

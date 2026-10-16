@@ -1,10 +1,11 @@
 from __future__ import annotations
-from shared.friendly_errors import explain, friendly
+from shared.friendly_errors import PlainLanguageError, explain, friendly
 
 import logging
 
 import os
 import threading
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from shared.forecast_output_paths import (
@@ -16,6 +17,7 @@ import ttkbootstrap as tb
 from automations.forecast.mapping import FORECAST_CATEGORIES, routes_for
 from automations.forecast.service import (
     build_forecast_period,
+    default_forecast_start,
     populate_monthly_forecast_from_tableau,
     prepare_monthly_forecast,
     validate_monthly_forecast,
@@ -64,6 +66,7 @@ class ForecastRefreshView(tb.Frame):
             value="Select the forecast period and the three required locations."
         )
         self.period_summary_var = tb.StringVar()
+        self.forecast_start_var = tb.StringVar()
         self.progress_var = tb.IntVar(value=0)
 
         self.files_created_var = tb.StringVar(value="0")
@@ -126,7 +129,7 @@ class ForecastRefreshView(tb.Frame):
         # Period: month, year and fiscal year on one row.
         period = tb.Frame(panel)
         period.grid(row=0, column=0, columnspan=3, sticky="ew")
-        for col in range(3):
+        for col in range(4):
             period.columnconfigure(col, weight=1, uniform="period")
 
         def field(col, text):
@@ -137,6 +140,7 @@ class ForecastRefreshView(tb.Frame):
         field(0, "Forecast Month")
         field(1, "Forecast Year")
         field(2, "Fiscal Year")
+        field(3, "Forecast Start")
 
         self.forecast_month_combo = tb.Combobox(
             period, values=list(MONTH_LOOKUP), state="readonly"
@@ -163,7 +167,13 @@ class ForecastRefreshView(tb.Frame):
             self.forecast_month_combo,
             self.forecast_year_combo,
         ):
-            combo.bind("<<ComboboxSelected>>", self._update_period_summary)
+            combo.bind("<<ComboboxSelected>>", self._month_changed)
+
+        # Defaults to the 1st of the forecast month; can be typed over (MM/DD/YYYY).
+        self.forecast_start_entry = tb.Entry(period, textvariable=self.forecast_start_var)
+        self.forecast_start_entry.grid(row=1, column=3, sticky="ew", padx=(8, 0), pady=(2, 0))
+        self.forecast_start_entry.bind("<FocusOut>", self._update_period_summary)
+        self.forecast_start_entry.bind("<Return>", self._update_period_summary)
 
         tb.Label(
             panel,
@@ -418,7 +428,11 @@ class ForecastRefreshView(tb.Frame):
         ).pack(pady=(3, 0))
 
     def _update_validation_output(self) -> None:
-        period = self._period()
+        period = build_forecast_period(  # the folder depends only on the month
+            fiscal_year=self.fiscal_year_combo.get(),
+            forecast_month=MONTH_LOOKUP[self.forecast_month_combo.get()],
+            forecast_year=int(self.forecast_year_combo.get()),
+        )
 
         path = get_forecast_validation_output_folder(
             fiscal_year=period["fiscal_year"],
@@ -452,12 +466,41 @@ class ForecastRefreshView(tb.Frame):
     # PERIOD
     # =========================================================
 
+    def _forecast_start(self) -> date:
+        text = self.forecast_start_var.get().strip()
+        for pattern in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(text, pattern).date()
+            except ValueError:
+                pass
+        raise PlainLanguageError(
+            f'Forecast Start "{text}" is not a date. Type it as MM/DD/YYYY, for example 10/01/2026.'
+        )
+
     def _period(self) -> dict:
         return build_forecast_period(
             fiscal_year=self.fiscal_year_combo.get(),
             forecast_month=MONTH_LOOKUP[self.forecast_month_combo.get()],
             forecast_year=int(self.forecast_year_combo.get()),
+            forecast_start=self._forecast_start(),
         )
+
+    def _checked_period(self) -> dict | None:
+        """The period, or None after telling the user what is wrong with it."""
+        try:
+            return self._period()
+        except PlainLanguageError as exc:
+            messagebox.showerror("Forecast Start", str(exc), parent=self.winfo_toplevel())
+            return None
+
+    def _month_changed(self, _event=None) -> None:
+        """A new month resets Forecast Start to the 1st of that month."""
+        start = default_forecast_start(
+            MONTH_LOOKUP[self.forecast_month_combo.get()],
+            int(self.forecast_year_combo.get()),
+        )
+        self.forecast_start_var.set(f"{start:%m/%d/%Y}")
+        self._update_period_summary()
 
     @staticmethod
     def _fiscal_year_for(month: int, year: int) -> str:
@@ -475,7 +518,17 @@ class ForecastRefreshView(tb.Frame):
             )
         )
         self.fiscal_year_combo.configure(state="disabled")
-        period = self._period()
+        if not self.forecast_start_var.get().strip():
+            start = default_forecast_start(
+                MONTH_LOOKUP[self.forecast_month_combo.get()],
+                int(self.forecast_year_combo.get()),
+            )
+            self.forecast_start_var.set(f"{start:%m/%d/%Y}")
+        try:
+            period = self._period()
+        except PlainLanguageError as exc:
+            self.period_summary_var.set(str(exc))
+            return
         self.period_summary_var.set(
             f"Selected Period: {period['display']}\n"
             f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
@@ -586,7 +639,9 @@ class ForecastRefreshView(tb.Frame):
         if not self._validate_inputs():
             return
 
-        period = self._period()
+        period = self._checked_period()
+        if period is None:
+            return
         confirmed = messagebox.askyesno(
             "Run Monthly Forecast",
             (
@@ -638,6 +693,7 @@ class ForecastRefreshView(tb.Frame):
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
+                forecast_start=period["forecast_start"],
                 overwrite_mode=inputs["overwrite_mode"],
                 open_tableau=True,
             )
@@ -714,7 +770,9 @@ class ForecastRefreshView(tb.Frame):
         if not self._validate_inputs():
             return
 
-        period = self._period()
+        period = self._checked_period()
+        if period is None:
+            return
         confirmed = messagebox.askyesno(
             "Update Workbooks from Tableau",
             (
@@ -761,6 +819,7 @@ class ForecastRefreshView(tb.Frame):
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
+                forecast_start=period["forecast_start"],
                 categories=[inputs["category"]],
             )
             self.after(0, lambda r=result, c=inputs["category"]: self._population_complete(c, r))
@@ -868,7 +927,9 @@ class ForecastRefreshView(tb.Frame):
                 parent=self.winfo_toplevel(),
             )
             return
-        period = self._period()
+        period = self._checked_period()
+        if period is None:
+            return
 
         confirmed = messagebox.askyesno(
             "Validate Final Forecast",
@@ -917,6 +978,7 @@ class ForecastRefreshView(tb.Frame):
                 fiscal_year=period["fiscal_year"],
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
+                forecast_start=period["forecast_start"],
                 tolerance=5.00,
                 categories=[category],
             )

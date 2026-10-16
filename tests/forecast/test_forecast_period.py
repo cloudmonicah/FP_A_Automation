@@ -3,15 +3,31 @@ from datetime import date
 from automations.forecast import service
 
 
-def test_forecast_start_is_the_first_of_the_forecast_month():
+def test_october_uses_the_september_forecast_type_and_starts_10_1():
     october = service.build_forecast_period("FY27", 10, 2026)
     assert october["forecast_start"] == date(2026, 10, 1)
     assert october["forecast_start_tableau"] == "#2026-10-01#"
-    assert october["forecast_type"] == "FY27 Forecast_102026"   # unchanged
+    assert october["forecast_type"] == "FY27 Forecast_092026"
     assert october["display"] == "October 2026"
 
     january = service.build_forecast_period("FY27", 1, 2027)
     assert january["forecast_start"] == date(2027, 1, 1)
+    assert january["forecast_type"] == "FY27 Forecast_122026"
+
+
+def test_forecast_start_can_be_entered():
+    october = service.build_forecast_period("FY27", 10, 2026, forecast_start=date(2026, 9, 1))
+    assert october["forecast_start_tableau"] == "#2026-09-01#"
+    assert october["forecast_type"] == "FY27 Forecast_092026"
+
+
+def test_forecast_start_must_be_the_first_of_a_month():
+    import pytest
+
+    from shared.friendly_errors import PlainLanguageError
+
+    with pytest.raises(PlainLanguageError, match="1st of a month"):
+        service.build_forecast_period("FY27", 10, 2026, forecast_start=date(2026, 9, 15))
 
 
 def test_step_2_opens_tableau_only_when_it_is_not_open(monkeypatch):

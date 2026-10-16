@@ -128,3 +128,10 @@ def test_company_filter_message_is_plain():
 
     text = friendly(ValueError('Expected one Company filter on individual forecast tab "Monthly Forecast".'))
     assert '"Monthly Forecast"' in text and "not validated" in text
+
+
+def test_grand_total_found_on_a_tab_without_a_company_column():
+    # Live run: ALIV Head Office's tab starts with "GL Account Mapping".
+    rows = [{"GL Account Mapping": "Salaries", "Grand Total": "10"},
+            {"GL Account Mapping": "Grand Total", "Grand Total": "1,234"}]
+    assert vs.get_individual_tableau_grand_total(rows) == 1234
