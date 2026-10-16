@@ -104,7 +104,7 @@ def test_one_category_is_validated_and_the_report_keeps_the_others(tmp_path, mon
     categories = [row[header.index("Category")] for row in detail.iter_rows(min_row=2, values_only=True)]
     assert categories == ["OPEX", "Revenue"]  # OPEX kept after running Revenue
     summary = {row[0]: row[1] for row in report["Validation Summary"].iter_rows(values_only=True)}
-    assert summary["Forecast Start"] == datetime(2026, 10, 1)
+    assert summary["Forecast Start"] == datetime(2026, 9, 1)
     assert summary["Passed"] == 2
 
 

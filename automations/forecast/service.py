@@ -1,5 +1,5 @@
 from __future__ import annotations
-from shared.friendly_errors import explain
+from shared.friendly_errors import PlainLanguageError, explain
 
 from datetime import date
 from pathlib import Path
@@ -44,10 +44,18 @@ MONTH_ABBR = {
 }
 
 
+def default_forecast_start(forecast_month: int, forecast_year: int) -> date:
+    """The 1st of the month before the forecast month (October 2026 -> 9/1/2026)."""
+    if forecast_month == 1:
+        return date(forecast_year - 1, 12, 1)
+    return date(forecast_year, forecast_month - 1, 1)
+
+
 def build_forecast_period(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
 ) -> dict:
     """Build the single monthly period used by Excel and every Tableau source."""
     if forecast_month not in range(1, 13):
@@ -57,9 +65,11 @@ def build_forecast_period(
     if not re.fullmatch(r"FY\d{2}", fiscal_year):
         raise ValueError("Fiscal year must look like FY27.")
 
-    # Forecast Start is the 1st of the forecast month (October 2026 -> 10/1/2026).
-    # Live run: 10/1 brought all 12 months from Tableau; 9/1 brought only Jul-Aug.
-    month_start = start = date(forecast_year, forecast_month, 1)
+    month_start = date(forecast_year, forecast_month, 1)
+    # Forecast Start is entered on the page; it defaults to the month before.
+    start = forecast_start or default_forecast_start(forecast_month, forecast_year)
+    if start.day != 1:
+        raise PlainLanguageError("Forecast Start must be the 1st of a month, for example 09/01/2026.")
     forecast_type = f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
 
     return {
@@ -79,6 +89,7 @@ def set_consolidated_forecast_period(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
 ) -> dict:
     """
     Set the consolidated FY Forecast workbook to the GUI-selected period.
@@ -92,6 +103,7 @@ def set_consolidated_forecast_period(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     # Proven Forecast Start updater + disk verification.
@@ -165,6 +177,7 @@ def prepare_monthly_forecast(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
     overwrite_mode: str = "skip",
     open_tableau: bool = True,
 ) -> dict:
@@ -173,6 +186,7 @@ def prepare_monthly_forecast(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     excel_result = create_forecast_refresh(
@@ -189,6 +203,7 @@ def prepare_monthly_forecast(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     if open_tableau:
@@ -290,6 +305,7 @@ def populate_monthly_forecast_from_tableau(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
     categories: list[str] | None = None,
 ) -> dict:
     """
@@ -303,6 +319,7 @@ def populate_monthly_forecast_from_tableau(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     # Re-apply the selected period immediately before extraction.
@@ -311,6 +328,7 @@ def populate_monthly_forecast_from_tableau(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     routes = routes_for(categories)
@@ -401,6 +419,7 @@ def validate_monthly_forecast(
     fiscal_year: str,
     forecast_month: int,
     forecast_year: int,
+    forecast_start: date | None = None,
     tolerance: float = 5.00,
     categories: list[str] | None = None,
 ) -> dict:
@@ -413,6 +432,7 @@ def validate_monthly_forecast(
         fiscal_year=fiscal_year,
         forecast_month=forecast_month,
         forecast_year=forecast_year,
+        forecast_start=forecast_start,
     )
 
     validation_output_folder = get_forecast_validation_output_folder(
