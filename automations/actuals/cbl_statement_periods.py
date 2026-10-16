@@ -12,6 +12,19 @@ def canonical(value):
     return re.sub(r"\s*-\s*", "-", " ".join(text.upper().replace("&", " AND ").split()))
 
 
+# Names the CBL statement has used for the same Revenue line over time.
+# Financials tab -> the name this report uses.
+_REVENUE_STATEMENT_NAMES = {
+    "GROSS REVENUES": "Gross Revenue",
+    "SMART HOME": "Other",
+}
+# The report's name -> other names the Data tab uses for that line.
+_REVENUE_DATA_NAMES = {
+    "MSA-ALIV": ("INTERCOMPANY",),
+    "OTHER": ("SMART HOME",),
+}
+
+
 def amount(value, label):
     if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
         raise ValueError(f"Missing numeric CBL statement actual: {label}")
@@ -72,11 +85,15 @@ def read_cbl_area(workbook_path, area, closed_period=None):
             "OPEX": ("Operating Costs", "Total Operating Costs"),
         }
         start_label, end_label = sections[area]
+        # September's statement says "Gross Revenues"; earlier months say "Gross Revenue".
+        start_labels = {canonical(start_label)}
+        if area == "Revenue":
+            start_labels.add(canonical("Gross Revenues"))
         fs_rows = list(financials.iter_rows(values_only=True))
         starts = [
             i
             for i, row in enumerate(fs_rows)
-            if canonical(row[1]) == canonical(start_label)
+            if canonical(row[1]) in start_labels
         ]
         if area in ("Revenue", "Direct Cost"):
             starts = [i for i in starts if fs_rows[i][2] is None]
@@ -127,6 +144,10 @@ def read_cbl_area(workbook_path, area, closed_period=None):
             if not raw_label or not isinstance(row[2], (int, float)):
                 continue
             label = re.sub(r"^\d+\s*", "", raw_label).strip()
+            if area == "Revenue":
+                if canonical(label).startswith("TOTAL "):
+                    continue  # e.g. "Total Service Revenues" is a subtotal, not a line
+                label = _REVENUE_STATEMENT_NAMES.get(canonical(label), label)
             if canonical(label) in {canonical(k) for k in ytd}:
                 raise ValueError(f"Duplicate CBL {area} statement line: {label}")
             ytd[label] = amount(row[2], label)
@@ -187,10 +208,13 @@ def read_cbl_area(workbook_path, area, closed_period=None):
                 ]
                 if not stops:
                     raise ValueError(f"CBL Data {area} section end is missing.")
+                names = {canonical(label)} | set(
+                    _REVENUE_DATA_NAMES.get(canonical(label), ())
+                )
                 matches = [
                     r
                     for r in rows[begins[0] + 1 : stops[0]]
-                    if canonical(r[2]) == canonical(label)
+                    if canonical(r[2]) in names
                 ]
                 if len(matches) != 1:
                     raise ValueError(f"Expected one CBL Data monthly line for {label}.")
