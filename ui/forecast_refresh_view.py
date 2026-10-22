@@ -40,6 +40,7 @@ MONTH_LOOKUP = {
 
 
 from ui.common import confirm_close_tableau, get_attention
+from ui.forecast_messages import step2_message
 
 log = logging.getLogger(__name__)
 
@@ -868,67 +869,6 @@ class ForecastRefreshView(tb.Frame):
             log.exception("Error in %s", type(self).__name__)
             self.after(0, lambda e=exc, c=inputs["category"]: self._population_failed(c, e))
 
-    @staticmethod
-    def _blank_month_note(result: dict) -> str:
-        """Sheets whose Tableau tab had no data for some months (pasted blank)."""
-        lines = [
-            f"  - {item['workbook']} / {item['worksheet']}: "
-            f"{', '.join(item['months_blank_in_tableau'])}"
-            for item in result.get("passed", [])
-            if item.get("months_blank_in_tableau")
-        ]
-        if not lines:
-            return ""
-        return (
-            "\nNo data in Tableau for these months (left blank):\n"
-            + "\n".join(lines[:10])
-            + ("\n  ...and more (see the log)." if len(lines) > 10 else "")
-            + "\n"
-        )
-
-    @staticmethod
-    def _needs_attention(result: dict) -> bool:
-        """Something to look at: a retry, a removed comment or unmerged cells.
-
-        A date format being corrected is housekeeping and not a warning.
-        """
-        passed = result.get("passed", [])
-        return bool(
-            result.get("check_manually")
-            or any(item.get("comments_dropped") or item.get("unmerged") for item in passed)
-        )
-
-    @staticmethod
-    def _population_notes(result: dict) -> str:
-        """What the user should look at after Step 2, in plain words."""
-        notes = []
-        retried = result.get("check_manually") or []
-        if retried:
-            notes.append(
-                "Please check these by hand. Something interrupted them the first "
-                "time; they worked on the second try:"
-            )
-            notes += [f"  - {item['workbook']} / {item['worksheet']}" for item in retried[:10]]
-        dropped = [
-            (item, entry) for item in result.get("passed", []) for entry in item.get("comments_dropped") or []
-        ]
-        if dropped:
-            notes.append("Comments on lines that are no longer in Tableau (removed with the line):")
-            notes += [
-                f"  - {item['workbook']} / {item['worksheet']}: {entry['account']} - \"{entry['text'][:80]}\""
-                for item, entry in dropped[:10]
-            ]
-        unmerged = [item for item in result.get("passed", []) if item.get("unmerged")]
-        if unmerged:
-            notes.append("Merged cells were unmerged so lines could be added or removed "
-                         "(their text stays on the first line):")
-            notes += [f"  - {item['workbook']} / {item['worksheet']}: {', '.join(item['unmerged'])}"
-                      for item in unmerged[:10]]
-        fixed = sum(item.get("date_formats_fixed", 0) for item in result.get("passed", []))
-        if fixed:
-            notes.append(f"{fixed} amount(s) were formatted as dates and now use the sheet's number format.")
-        return ("\n" + "\n".join(notes) + "\n") if notes else ""
-
     def _population_failed(self, category: str, error: Exception) -> None:
         self.category_status_vars[category].set("Stopped - see message")
         self._process_failed(error)
@@ -945,62 +885,28 @@ class ForecastRefreshView(tb.Frame):
         self.progress_var.set(75)
 
         if failed:
-            self.status_var.set("Population Completed with Exceptions")
+            self.status_var.set(f"{category}: some sheets not updated")
             self.status_description_var.set(
-                f"{result['routes_passed']} routes passed and "
-                f"{result['routes_failed']} had exceptions. "
-                "Continue to final validation; exceptions will be included "
-                "in the validation results."
+                f"{result['routes_passed']} sheets updated, {result['routes_failed']} not updated. "
+                "The message lists what to fix; then click Update again."
             )
         else:
-            self.status_var.set("Forecast Workbooks Updated")
+            self.status_var.set(f"{category} workbooks updated")
             self.status_description_var.set(
-                f"All {result['routes_passed']} mapped Tableau routes "
-                "were written to the forecast workbooks. "
-                "Final individual Tableau validation is ready."
+                f"All {result['routes_passed']} sheets were updated from Tableau. "
+                f"Next: Validate {category}."
             )
 
         self.prepare_button.configure(state="normal")
         self._set_populate_state("normal")
         self._set_validate_state("normal")
 
-        if failed:
-            lines = [
-                f"{category}: {result['routes_passed']} sheets updated, "
-                f"{result['routes_failed']} not updated (left unchanged):",
-                "",
-            ] + [
-                f"- {item['workbook']} / {item['worksheet']}: {item['error']}"
-                for item in failed[:10]
-            ]
-            if len(failed) > 10:
-                lines.append(f"...and {len(failed) - 10} more (see the log).")
-            lines.append(self._population_notes(result))
-            if result.get("validation_folder"):
-                lines.append(f"Tableau extract and run log saved in:\n{result['validation_folder']}")
-            messagebox.showwarning(
-                f"Update from Tableau - {category}",
-                "\n".join(lines),
-                parent=self.winfo_toplevel(),
-            )
-        else:
-            (messagebox.showwarning if self._needs_attention(result) else messagebox.showinfo)(
-                f"Update from Tableau - {category}",
-                (
-                    f"{category}: {result['workbooks_updated']} workbooks updated.\n"
-                    f"{result['worksheets_updated']} worksheets updated.\n"
-                    f"Months pasted from Tableau: {result.get('months_pasted') or 'none'}\n"
-                    "Formulas in the workbooks were kept.\n"
-                    + self._blank_month_note(result)
-                    + self._population_notes(result)
-                    + (f"\nTableau extract and run log saved in:\n{result['validation_folder']}\n"
-                       if result.get("validation_folder") else "")
-                    + "\n"
-                    f"Next: click Validate under {category} (step 3) to compare "
-                    "the Excel totals to the individual Tableau workbooks."
-                ),
-                parent=self.winfo_toplevel(),
-            )
+        attention, text = step2_message(category, result)
+        (messagebox.showwarning if attention else messagebox.showinfo)(
+            f"Update from Tableau - {category}",
+            text,
+            parent=self.winfo_toplevel(),
+        )
 
     # =========================================================
     # STEP 3 - INDIVIDUAL TABLEAU VALIDATION

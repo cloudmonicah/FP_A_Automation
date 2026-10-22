@@ -678,6 +678,17 @@ def populate_monthly_forecast_from_tableau(
         for item in result["failed"]:
             logging.getLogger("step2").warning("Not updated: %s / %s: %s",
                                                item["workbook"], item["worksheet"], item["error"])
+        for item in result["passed"]:
+            if item.get("unmerged"):
+                logging.getLogger("step2").info("Unmerged cells: %s / %s: %s",
+                                                item["workbook"], item["worksheet"], ", ".join(item["unmerged"]))
+            if item.get("months_blank_in_tableau"):
+                logging.getLogger("step2").info("No figures in Tableau (left empty): %s / %s: %s",
+                                                item["workbook"], item["worksheet"],
+                                                ", ".join(item["months_blank_in_tableau"]))
+            if item.get("date_formats_fixed"):
+                logging.getLogger("step2").info("Amounts shown as dates fixed: %s / %s: %s",
+                                                item["workbook"], item["worksheet"], item["date_formats_fixed"])
         for item in result.get("check_manually", []):
             logging.getLogger("step2").warning("Check by hand (retried): %s / %s",
                                                item["workbook"], item["worksheet"])

@@ -57,3 +57,13 @@ def test_missing_parameter_is_reported(twb):
     twb.write_text(TWB.replace("Forecast Start", "Something Else"), encoding="utf-8")
     with pytest.raises(RuntimeError, match="Forecast Start"):
         tableau_service.set_forecast_start_parameter(twb, 10, 2026)
+
+
+def test_raw_copy_names_stay_inside_the_windows_path_limit(tmp_path):
+    folder = tmp_path / ("x" * (175 - len(str(tmp_path))))
+    long_tab = "ALIV Direct Cost (CONSUMER SOLUTIONS) - ROAMING_INTERCONNECT_OTHER Forecast"
+    path = tableau_service.raw_copy_path(folder, long_tab, 7)
+    assert len(str(path)) <= 250
+    assert path.name.startswith("007_ALIV_Direct_Cost") and path.suffix == ".txt"
+    other = tableau_service.raw_copy_path(folder, long_tab.replace("ALIV", "CBL"), 7)
+    assert path.name[:-20] != other.name[:-20]   # kept apart (timestamps aside)
