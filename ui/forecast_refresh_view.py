@@ -434,12 +434,19 @@ class ForecastRefreshView(tb.Frame):
             forecast_year=int(self.forecast_year_combo.get()),
         )
 
-        path = get_forecast_validation_output_folder(
-            fiscal_year=period["fiscal_year"],
-            forecast_month=period["forecast_month"],
-            forecast_year=period["forecast_year"],
-            create=False,
-        )
+        try:
+            path = get_forecast_validation_output_folder(
+                fiscal_year=period["fiscal_year"],
+                forecast_month=period["forecast_month"],
+                forecast_year=period["forecast_year"],
+                create=False,
+            )
+        except Exception as exc:  # shown on the page; a run stops with the full message
+            self.validation_output_var.set(
+                "Not available: the shared Validation Results folder is not in your OneDrive. "
+                + friendly(exc).split("\n\n", 1)[-1]
+            )
+            return
 
         self.validation_output_var.set(str(path))
 

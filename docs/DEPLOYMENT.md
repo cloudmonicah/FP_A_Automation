@@ -65,13 +65,33 @@ Settings are layered, later ones win:
 | Setting | Meaning |
 | --- | --- |
 | `workbooks_root` | Folder holding the `OPEX`, `SAC`, `Revenue` and `Direct Cost` workbook folders. |
-| `validation_output_root` | Where actuals validation reports go. Blank = find the synced `Finance_Validation_Results` OneDrive folder. |
-| `forecast_validation_output_root` | Where forecast validation reports go. Blank = the synced OneDrive shortcut. |
+| `shared_output_root` | The folder all output goes to. Blank = the Teams folder `Financial Planning & Analysis-Validation Results - Documents` in the current person's OneDrive. |
+| `validation_output_root` | Optional separate folder for actuals validation. Blank = the shared folder. |
+| `forecast_validation_output_root` | Optional separate folder for forecast validation. Blank = the shared folder. |
 | `budget_source_folder`, `budget_output_folder` | Defaults for the Initial Budget Setup page. |
 | `test_mode` | Shows the TEST MODE badge. |
 | `log_level` | `INFO` normally; `DEBUG` when chasing a problem. |
 
 Folder changes take effect after restarting the app.
+
+## Shared output folder (Teams)
+
+All reports, Tableau extracts, Tableau raw copies and run logs go to the Teams channel
+**Financial Planning & Analysis > Validation Results**, in one layout for Actuals and Forecast:
+
+```
+FY27\2026-10 - October\
+    Forecast Validation\   report, Tableau Extracts\, Tableau Raw Copies\, Logs\
+    OPEX\  Revenue\  Direct Cost\  Tableau Raw Copies\  Logs\     (Actuals Validation)
+```
+
+Everyone who runs the app adds that folder to their own OneDrive once: in Teams open the
+channel's **Files**, choose **Open in SharePoint**, then **Add shortcut to My files**. The app
+finds it in the current person's OneDrive; there is no fallback to anyone else's folder. People
+who only read the results can add the same shortcut.
+
+Tableau's temporary `.twb` working copies stay on each PC, in
+`%LOCALAPPDATA%\FPA Automation\Tableau Temp Copies`, and are removed after each run.
 
 ## When something goes wrong
 

@@ -123,201 +123,29 @@ def get_month_folder_name(
 
 
 # ============================================================
-# ONEDRIVE ROOT DISCOVERY
-# ============================================================
-
-
-def _get_possible_onedrive_roots() -> list[Path]:
-    """
-    Find OneDrive locations for the CURRENT Windows user.
-
-    Nothing in this function is tied to a specific username
-    or computer.
-
-    Windows commonly exposes OneDrive locations through:
-        OneDriveCommercial
-        OneDrive
-        OneDriveConsumer
-
-    We also inspect the current user's home folder for
-    company OneDrive folders as a fallback.
-    """
-
-    possible_roots: list[Path] = []
-
-    # --------------------------------------------------------
-    # Check standard OneDrive environment variables.
-    # --------------------------------------------------------
-
-    environment_variables = (
-        "OneDriveCommercial",
-        "OneDrive",
-        "OneDriveConsumer",
-    )
-
-    for variable_name in environment_variables:
-
-        value = os.environ.get(variable_name)
-
-        if not value:
-            continue
-
-        root = Path(value)
-
-        if root.exists() and root not in possible_roots:
-
-            possible_roots.append(root)
-
-    # --------------------------------------------------------
-    # Look inside the CURRENT user's home directory.
-    #
-    # Example:
-    #
-    # User A:
-    #     C:\Users\UserA\OneDrive - Aliv
-    #
-    # User B:
-    #     C:\Users\UserB\OneDrive - Aliv
-    #
-    # No username is hard-coded.
-    # --------------------------------------------------------
-
-    user_home = Path.home()
-
-    if user_home.exists():
-
-        try:
-
-            for child in user_home.iterdir():
-
-                if not child.is_dir():
-                    continue
-
-                if not child.name.casefold().startswith("onedrive"):
-                    continue
-
-                if child not in possible_roots:
-
-                    possible_roots.append(child)
-
-        except (
-            PermissionError,
-            OSError,
-        ):
-
-            pass
-
-    return possible_roots
-
-
-# ============================================================
-# FIND SHARED VALIDATION ROOT
+# SHARED VALIDATION ROOT
 # ============================================================
 
 
 def find_actuals_validation_results_folder() -> Path:
+    """The Teams "Validation Results" folder (or validation_output_root in settings.json).
 
+    There is no search for other people's folders: the shared folder must be
+    added to this person's OneDrive, or the run stops with a plain message.
+    """
     from shared import settings
+    from shared.friendly_errors import PlainLanguageError
+    from shared.output_root import shared_output_root
 
     configured = settings.get_path("validation_output_root")
     if configured is not None:
         if not configured.is_dir():
-            raise FileNotFoundError(
+            raise PlainLanguageError(
                 "The validation output folder set in settings.json was not found:\n"
-                f"{configured}\n\nCheck the shared drive is connected, or update settings.json."
+                f"{configured}\n\nCheck the folder is synced, or update settings.json."
             )
         return configured
-
-    expected_name_fragment = VALIDATION_ROOT_FOLDER
-
-    possible_roots = _get_possible_onedrive_roots()
-
-    # ========================================================
-    # FIRST PASS
-    # Check likely OneDrive shortcut locations.
-    # ========================================================
-
-    for root in possible_roots:
-
-        shortcut_candidates = (
-            root / "Shortcuts",
-            root / "My files" / "Shortcuts",
-        )
-
-        for shortcuts_folder in shortcut_candidates:
-
-            if not shortcuts_folder.exists():
-                continue
-
-            try:
-
-                for child in shortcuts_folder.iterdir():
-
-                    if not child.is_dir():
-                        continue
-
-                    if any(
-                        name.casefold() in child.name.casefold()
-                        for name in (
-                            expected_name_fragment,
-                            LEGACY_VALIDATION_ROOT_FOLDER,
-                        )
-                    ):
-
-                        return child
-
-            except (
-                PermissionError,
-                OSError,
-            ):
-
-                continue
-
-    # ========================================================
-    # SECOND PASS
-    # Check immediate folders under each OneDrive root.
-    #
-    # This catches situations where the user synced the
-    # SharePoint/OneDrive folder differently.
-    # ========================================================
-
-    for root in possible_roots:
-
-        try:
-
-            for child in root.iterdir():
-
-                if not child.is_dir():
-                    continue
-
-                if any(
-                    name.casefold() in child.name.casefold()
-                    for name in (expected_name_fragment, LEGACY_VALIDATION_ROOT_FOLDER)
-                ):
-
-                    return child
-
-        except (
-            PermissionError,
-            OSError,
-        ):
-
-            continue
-
-    # ========================================================
-    # NOTHING FOUND
-    # ========================================================
-
-    searched = "\n".join(f" - {root}" for root in possible_roots)
-
-    raise FileNotFoundError(
-        "The shared Finance Validation Results folder "
-        "could not be located automatically.\n\n"
-        "Use Browse in the Finance Automation Center to "
-        "select the synced validation output folder.\n\n"
-        "OneDrive locations checked:\n"
-        f"{searched or ' - No OneDrive folders detected'}"
-    )
+    return shared_output_root()
 
 
 # ============================================================
@@ -392,7 +220,10 @@ def create_validation_output_folders(
 
     # Accept the existing root until it is renamed in OneDrive.
     # This prevents nesting the new root inside the old shared folder.
-    if any(
+    from shared.output_root import SHARED_FOLDER_NAME
+
+    # The shared Teams folder holds the FY folders directly, like Forecast.
+    if base_output_folder.name.casefold() == SHARED_FOLDER_NAME.casefold() or any(
         name.casefold() in base_output_folder.name.casefold()
         for name in (VALIDATION_ROOT_FOLDER, LEGACY_VALIDATION_ROOT_FOLDER)
     ):

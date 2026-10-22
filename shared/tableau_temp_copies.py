@@ -1,8 +1,8 @@
 """Location for temporary Tableau (.twb) working copies.
 
 Temporary copies must NEVER be written next to the source workbooks. They are
-placed in a dedicated folder inside the synced Finance validation results
-folder (Stacy's OneDrive shortcut) and deleted after each run.
+placed in a folder on this PC only (%LOCALAPPDATA%\\FPA Automation\\Tableau Temp
+Copies), never a synced or shared folder, and deleted after each run.
 """
 from __future__ import annotations
 
@@ -15,13 +15,9 @@ STALE_AFTER_SECONDS = 12 * 60 * 60
 
 
 def tableau_temp_folder() -> Path:
-    from automations.actuals.validation_output_folders import (
-        find_actuals_validation_results_folder,
-    )
+    from shared.output_root import local_work_folder
 
-    folder = Path(find_actuals_validation_results_folder()) / TEMP_COPY_FOLDER_NAME
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
+    return local_work_folder("Tableau Temp Copies")
 
 
 def cleanup_stale_temp_copies(folder: Path | None = None) -> None:

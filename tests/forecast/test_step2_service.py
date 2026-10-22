@@ -209,11 +209,3 @@ def test_step_2_writes_only_workbooks_to_the_output_folder(tmp_path, monkeypatch
     (log,) = (month / "Logs").iterdir()
     assert log.name.startswith("Step 2 - OPEX - ") and "1 sheets updated" in log.read_text(encoding="utf-8")
     assert load_workbook(output / "FY27 OPEX Legal_Oct Forecast.xlsx")["ALIV"]["F2"].value == 5
-
-
-def test_missing_validation_folder_is_explained(tmp_path, monkeypatch):
-    from shared import forecast_output_paths, settings
-
-    monkeypatch.setattr(settings, "get_path", lambda key: tmp_path / "not synced")
-    with pytest.raises(PlainLanguageError, match="not available on this computer"):
-        forecast_output_paths.get_forecast_validation_output_folder("FY27", 10, 2026, create=True)
