@@ -303,6 +303,14 @@ def get_individual_tableau_grand_total(
         if len(top_level) == 1:
             grand_total_row = top_level[0]
 
+    if grand_total_row is None and "Grand Total" in tableau_rows[0] and not any(
+        _is_total_label(row.get(column)) for row in tableau_rows for column in labels
+    ):
+        # Grand Totals for rows are off and there are no subtotals (CBL
+        # Content Fees_Media), so every line is a detail line: their sum is
+        # the tab's total.
+        return sum(_number(row.get("Grand Total")) or 0.0 for row in tableau_rows)
+
     if grand_total_row is None:
         raise RuntimeError(
             "Individual Tableau crosstab does not contain "
@@ -720,6 +728,26 @@ def _prepare_individual_forecast_copy(
                     calculation.set("formula", '"Forecast"')
 
         period_mode = "Forecast Measure"
+
+        # These workbooks keep Forecast Type as a filter for every tab on
+        # the data source (Tableau "All Using This Data Source", saved under
+        # <shared-views>), so the chosen Forecast Type is set there.
+        tab_sources = {
+            item.get("name") for item in target_sheet.findall("./table/view/datasources/datasource")
+        }
+        for view in root.findall("./shared-views/shared-view"):
+            if view.get("name") not in tab_sources:
+                continue
+            for item in view.findall("filter"):
+                if not item.get("column", "").endswith("[none:Forecast Type:nk]"):
+                    continue
+                monthly = [
+                    member for member in item.findall(".//groupfilter[@function='member']")
+                    if re.fullmatch(r"FY\d{2} Forecast_\d{6}", member.get("member", "").strip('"'), re.I)
+                ]
+                if len(monthly) == 1:
+                    monthly[0].set("member", f'"{forecast_type_value}"')
+                    period_mode = "Forecast Measure + Forecast Type"
 
     # --------------------------------------------------------
     # SAVE TEMP COPY

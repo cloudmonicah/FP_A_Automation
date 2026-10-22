@@ -445,3 +445,63 @@ def test_selections_apply_to_existing_lines_and_leave_other_alone():
             assert "individual_include" not in route
     assert not [r for r in FORECAST_ROUTES
                 if r["category"] in ("OPEX", "Direct Cost") and r.get("validation_status") != "confirmed"]
+
+
+FORECAST_MEASURE_WORKBOOK = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook>
+  <datasources><datasource name='Parameters'>
+    <column caption='Forecast Start' name='[Parameter 1 1]' param-domain-type='list' value='#2026-08-01#'>
+      <calculation class='tableau' formula='#2026-08-01#' /></column>
+    <column caption='Forecast Measure' name='[Parameter 2]' param-domain-type='list' value='"Budget"'>
+      <calculation class='tableau' formula='"Budget"' /></column>
+  </datasource></datasources>
+  <shared-views><shared-view name='sqlproxy.abc'>
+    <filter class='categorical' column='[sqlproxy.abc].[none:Forecast Type:nk]'>
+      <groupfilter function='union'>
+        <groupfilter function='member' level='[none:Forecast Type:nk]' member='"FY27 Forecast_092026"' />
+        <groupfilter function='member' level='[none:Forecast Type:nk]' member='"Non Forecast"' />
+      </groupfilter>
+    </filter>
+  </shared-view></shared-views>
+  <worksheets><worksheet name='Group Direct Cost Forecast'><table><view>
+    <datasources><datasource name='sqlproxy.abc' /><datasource name='Parameters' /></datasources>
+    <datasource-dependencies datasource='Parameters'>
+      <column caption='Forecast Start' name='[Parameter 1 1]' />
+      <column caption='Forecast Measure' name='[Parameter 2]' />
+    </datasource-dependencies>
+    <datasource-dependencies datasource='sqlproxy.abc'>
+      <column caption='Annual Forecast' name='[Calculation_1]'>
+        <calculation class='tableau' formula="IF [Parameters].[Parameter 2] = 'Forecast' THEN [Forecast] END" />
+      </column>
+    </datasource-dependencies>
+  </view></table></worksheet></worksheets>
+</workbook>
+"""
+
+
+def test_forecast_type_set_for_every_tab_on_the_data_source_is_updated(tmp_path):
+    # Most OPEX and Direct Cost workbooks keep Forecast Type as a filter
+    # applied to all tabs using the data source, not on the tab itself.
+    source = tmp_path / "Direct Costs_Internet Bandwidth_Aliv Business.twb"
+    source.write_text(FORECAST_MEASURE_WORKBOOK, encoding="utf-8")
+    prepared = vs._prepare_individual_forecast_copy(
+        source=source, destination=source, tab="Group Direct Cost Forecast", company="CBL",
+        forecast_start=date(2026, 10, 1), forecast_type="FY27 Forecast_102026",
+    )
+    text = source.read_text(encoding="utf-8")
+    assert "FY27 Forecast_102026" in text and "FY27 Forecast_092026" not in text
+    assert "Non Forecast" in text
+    assert prepared["period_mode"] == "Forecast Measure + Forecast Type"
+
+
+def test_tab_without_a_grand_total_row_sums_its_lines():
+    # CBL Content Fees_Media: Grand Totals for rows are off and there are no subtotals.
+    rows = [{"GL Account Mapping": "CONTENT FEES", "GL Sub Account Description": "A", "Grand Total": "1,000"},
+            {"GL Account Mapping": "CONTENT FEES", "GL Sub Account Description": "B", "Grand Total": "234"}]
+    assert vs.get_individual_tableau_grand_total(rows, company="CBL") == 1_234
+
+
+def test_report_has_no_period_mode_column(tmp_path):
+    from shared.forecast_validation_report import write_forecast_validation_report
+    import inspect
+    assert "Period Mode" not in inspect.getsource(write_forecast_validation_report)

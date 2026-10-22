@@ -177,7 +177,6 @@ def write_forecast_validation_report(
         "Tableau Grand Total",
         "Variance",
         "Status",
-        "Period Mode",
         "Forecast Start",
         "Forecast Type",
         "Note",
@@ -201,7 +200,6 @@ def write_forecast_validation_report(
             item.get("tableau_grand_total"),
             item.get("variance"),
             item.get("status"),
-            item.get("period_mode"),
             _as_date(item.get("forecast_start")),
             item.get("forecast_type"),
             item.get("note"),
@@ -213,7 +211,7 @@ def write_forecast_validation_report(
             detail.cell(r, col).border = edge
         for col in (5, 6, 7):
             detail.cell(r, col).number_format = "$#,##0.00;[Red]-$#,##0.00"
-        detail.cell(r, 10).number_format = "mm/dd/yyyy"
+        detail.cell(r, 9).number_format = "mm/dd/yyyy"
         s = str(item.get("status") or "").upper()
         sc = detail.cell(r, 8)
         sc.font = Font(bold=True)
@@ -231,11 +229,10 @@ def write_forecast_validation_report(
         7: 16,
         8: 18,
         9: 18,
-        10: 18,
-        11: 26,
-        12: 70,
-        13: 16,
-        14: 20,
+        10: 26,
+        11: 70,
+        12: 16,
+        13: 20,
     }
     for col, w in widths.items():
         detail.column_dimensions[get_column_letter(col)].width = w
