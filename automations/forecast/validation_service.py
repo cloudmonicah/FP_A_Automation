@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from . import tableau_service as _tableau_xml  # noqa: F401  registers Tableau's "user:" XML prefix for saves
-from shared.friendly_errors import explain
+from shared.friendly_errors import PlainLanguageError, explain
 
 from datetime import date, datetime
 
@@ -211,6 +211,7 @@ def get_individual_tableau_grand_total(
     tableau_rows: list[dict],
     company: str | None = None,
     exclude: dict | None = None,
+    include: dict | None = None,
 ) -> float:
     """
     The individual tab's total for this sheet, read from the copied table.
@@ -230,6 +231,37 @@ def get_individual_tableau_grand_total(
         raise RuntimeError("Individual Tableau crosstab returned no rows.")
 
     labels = _label_columns(tableau_rows[0])
+
+    if include:
+        # The sheet is the tab's lines that match its consolidated tab's
+        # selection (e.g. Company + GL Account Mapping), minus ``exclude``.
+        def wanted(values):
+            return {"" if value in (None, "%null%") else _norm(value) for value in values}
+
+        chosen = {column: wanted(values) for column, values in include.items()}
+        dropped = {column: wanted(values) for column, values in (exclude or {}).items()}
+        missing = [column for column in [*chosen, *dropped] if column not in tableau_rows[0]]
+        if missing:
+            raise RuntimeError(f"Individual Tableau crosstab has no column {missing[0]} to filter on.")
+        total = 0.0
+        matched = 0
+        for row in tableau_rows:
+            if any(_is_total_label(row.get(column)) for column in labels):
+                continue
+            if any(_norm(row.get(column)) not in values for column, values in chosen.items()):
+                continue
+            if any(_norm(row.get(column)) in values for column, values in dropped.items()):
+                continue
+            total += _number(row.get("Grand Total")) or 0.0
+            matched += 1
+        if not matched:
+            raise PlainLanguageError(
+                "No lines in the individual Tableau tab match this sheet's selection ("
+                + "; ".join(f"{column}: {', '.join(sorted(v or '(blank)' for v in values))[:120]}"
+                            for column, values in chosen.items())
+                + "). Check the tab, or the forecast type and period it is set to."
+            )
+        return total
 
     if exclude:
         excluded = {column: {_norm(v) for v in values} for column, values in exclude.items()}
@@ -401,6 +433,7 @@ def validate_route_from_tableau_rows(
         tableau_rows,
         company=route.get("company_filter"),
         exclude=route.get("individual_exclude"),
+        include=route.get("individual_include"),
     )
 
     adjusted_tableau_total = apply_validation_sign_rule(

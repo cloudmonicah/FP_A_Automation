@@ -821,6 +821,9 @@ def _workbook_stem(value):
         value = value.replace(f"_{month} forecast", "")
     return value.strip()
 
+from . import individual_selections as _individual_selections  # noqa: E402
+
+_individual_selections.apply(FORECAST_ROUTES)
 
 # Step 2 runs one category at a time. "Other" holds SAC and Below the Line.
 FORECAST_CATEGORIES = ("OPEX", "Direct Cost", "Revenue", "Other")

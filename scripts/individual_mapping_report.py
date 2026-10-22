@@ -61,6 +61,20 @@ def companies(routes):
     return {str(r.get("company_filter") or "").upper() for r in routes} & {"ALIV", "CBL"}
 
 
+def _values(values):
+    values = [str(v).strip() for v in values]
+    return ", ".join(values) if len(values) <= 3 else f"{len(values)} values ({', '.join(values[:2])}, ...)"
+
+
+def selection(route):
+    """The lines of the tab that make up this sheet, in plain words."""
+    parts = [f"{esc(column.replace('GL ', ''))} = {esc(_values(values))}"
+             for column, values in (route.get("individual_include") or {}).items()]
+    parts += [f"not {esc(column.replace('GL ', ''))} = {esc(_values(values))}"
+              for column, values in (route.get("individual_exclude") or {}).items()]
+    return "sums " + "; ".join(parts) if parts else "whole tab total"
+
+
 def deco(canvas, doc):
     canvas.saveState()
     canvas.setFont("Helvetica", 7.5)
@@ -91,7 +105,7 @@ summary = [[Paragraph(x, hdr) for x in ("", "Count")]] + [
         ("Forecast sheets", len(FORECAST_ROUTES)),
         ("Checked automatically", len(checked)),
         ("Not checked yet - need a department/line filter", len(need)),
-        ("Group tabs shared by ALIV and CBL (Company filter set per line)", len(shared)),
+        ("Group tabs shared by ALIV and CBL (each line sums its own company)", len(shared)),
         ("Tab names with an extra space", len(spaced)),
     )]
 t = Table(summary, colWidths=[4.2 * inch, 1 * inch], hAlign="LEFT")
@@ -108,16 +122,16 @@ for item in (
     story += [Paragraph("•&nbsp;&nbsp;" + item, body), Spacer(1, 2)]
 story += [Spacer(1, 6), Paragraph("Row colours: <font color='#8a4b00'><b>orange</b></font> = needs a filter or "
                                   "has an extra space; <font color='#2f6fb3'><b>blue</b></font> = group tab, "
-                                  "Company filter set per line.", body)]
+                                  "each line sums its own company's rows.", body)]
 
-widths = [2.35, 0.45, 3.25, 0.6, 2.95, 0.4]
+widths = [2.2, 0.4, 2.9, 0.6, 3.5, 0.4]
 for category in FORECAST_CATEGORIES:
     keys = sorted((k for k, rs in tabs.items() if rs[0]["category"] == category), key=lambda k: (k[0].lower(), k[1].lower()))
     lines = sum(len(tabs[k]) for k in keys)
     story += [PageBreak(), Paragraph(f"{category} - {len(keys)} individual tabs, {lines} sheets", h2)]
     data = [[Paragraph(x, hdr) for x in ("Individual Tableau workbook / tab", "Sheets",
                                          "Forecast sheet(s) it checks (company)", "Company filter",
-                                         "Step 3", "OK")]]
+                                         "Step 3 - lines compared", "OK")]]
     style = [("BACKGROUND", (0, 0), (-1, 0), HEAD), ("GRID", (0, 0), (-1, -1), 0.35, LINE),
              ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 3),
              ("BOTTOMPADDING", (0, 0), (-1, -1), 3), ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]
@@ -130,7 +144,7 @@ for category in FORECAST_CATEGORIES:
         status = []
         for r in rs:
             if r.get("validation_status") == "confirmed":
-                status.append(f"<b>{esc(r['excel_sheet'])}</b>: checked")
+                status.append(f"<b>{esc(r['excel_sheet'])}</b>: {selection(r)}")
             else:
                 status.append(f"<font color='#8a4b00'><b>{esc(r['excel_sheet'])}</b>: needs a filter - "
                               f"{esc(r.get('validation_filter_note') or 'not named')}</font>")
@@ -139,7 +153,7 @@ for category in FORECAST_CATEGORIES:
                       f"<font color='#9aa5b1' size='6.3'>{esc(folder)}</font>", cell),
             Paragraph(str(len(rs)), cell),
             Paragraph(sheets, cell),
-            Paragraph("Yes - set per line" if group else "No - kept as saved", cell),
+            Paragraph("No - kept as saved", cell),
             Paragraph("<br/>".join(status), cell),
             Paragraph("", cell),
         ])

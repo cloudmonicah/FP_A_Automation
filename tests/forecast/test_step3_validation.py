@@ -408,3 +408,40 @@ def test_total_row_with_a_total_label_is_the_total_row(tmp_path):
     path = tmp_path / "FY27 OPEX Human Resources_Oct Forecast.xlsx"
     wb.save(path)
     assert vs.get_excel_forecast_grand_total(path, "ALIV") == 1212
+
+
+def test_only_the_sheets_lines_are_summed_from_a_shared_tab():
+    rows = [{"Company": "ALIV", "GL FS Category": "MARKETING", "Grand Total": "1,000"},
+            {"Company": "ALIV", "GL FS Category": "FACILITIES", "Grand Total": "250"},
+            {"Company": "ALIV", "GL FS Category": "Total", "Grand Total": "1,250"},
+            {"Company": "CBL", "GL FS Category": "MARKETING", "Grand Total": "400"},
+            {"Company": "CBL", "GL FS Category": "Total", "Grand Total": "400"},
+            {"Company": "Grand Total", "GL FS Category": "Total", "Grand Total": "1,650"}]
+    pick = lambda **include: vs.get_individual_tableau_grand_total(rows, include=include)
+    assert pick(Company=["ALIV"], **{"GL FS Category": ["MARKETING"]}) == 1_000
+    assert pick(**{"GL FS Category": ["MARKETING"]}) == 1_400
+    assert vs.get_individual_tableau_grand_total(
+        rows, include={"Company": ["ALIV"]}, exclude={"GL FS Category": ["FACILITIES"]}) == 1_000
+
+
+def test_no_matching_lines_is_explained_in_plain_words():
+    rows = [{"Company": "ALIV", "GL FS Category": "MARKETING", "Grand Total": "1,000"}]
+    try:
+        vs.get_individual_tableau_grand_total(rows, include={"Company": ["CBL"]})
+    except vs.PlainLanguageError as error:
+        assert "No lines in the individual Tableau tab" in str(error)
+    else:
+        raise AssertionError("expected a plain-language error")
+
+
+def test_selections_apply_to_existing_lines_and_leave_other_alone():
+    from automations.forecast.individual_selections import SELECTIONS
+    from automations.forecast.mapping import FORECAST_ROUTES
+
+    keys = {(route["workbook"].rsplit("_", 1)[0], route["excel_sheet"]) for route in FORECAST_ROUTES}
+    assert set(SELECTIONS) <= keys
+    for route in FORECAST_ROUTES:
+        if route["category"] == "Other":
+            assert "individual_include" not in route
+    assert not [r for r in FORECAST_ROUTES
+                if r["category"] in ("OPEX", "Direct Cost") and r.get("validation_status") != "confirmed"]
