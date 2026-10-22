@@ -7,6 +7,10 @@ import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 
+# Keep Tableau's own "user:" prefix when a .twb is saved; without this,
+# ElementTree renames it to "ns0:" throughout the file.
+ET.register_namespace("user", "http://www.tableausoftware.com/xml/user")
+
 # ============================================================
 # TABLEAU FORECAST SERVICE
 # ============================================================

@@ -6,8 +6,10 @@ from typing import Any
 from copy import copy
 from datetime import datetime
 import calendar
+import os
 import re
 import shutil
+import zipfile
 
 from openpyxl import load_workbook
 from openpyxl.styles import Border, Side
@@ -56,6 +58,53 @@ MONTH_NUMBER_BY_ABBR = {
 # ============================================================
 # GENERAL HELPERS
 # ============================================================
+
+
+# openpyxl can only open these; .xls and .xlsb files have to be resaved first.
+EDITABLE_SUFFIXES = {".xlsx", ".xlsm"}
+
+
+def open_workbook_for_edit(workbook_path: str | Path):
+    """Open a workbook to change it, keeping the macros of a .xlsm file."""
+    workbook_path = Path(workbook_path)
+    if workbook_path.suffix.lower() not in EDITABLE_SUFFIXES:
+        raise PlainLanguageError(
+            f'"{workbook_path.name}" is an {workbook_path.suffix} file, which the app '
+            "can't update. Open it in Excel, save it as .xlsx (or .xlsm if it has "
+            "macros), then run again."
+        )
+    return load_workbook(
+        workbook_path,
+        data_only=False,
+        keep_vba=workbook_path.suffix.lower() == ".xlsm",
+    )
+
+
+def close_workbook(workbook) -> None:
+    """Close a workbook, including the macro file a .xlsm keeps open.
+
+    openpyxl leaves that file open after close(); on Windows the open file
+    then stops the workbook from being moved or replaced.
+    """
+    try:
+        workbook.close()
+    finally:
+        archive = getattr(workbook, "vba_archive", None)
+        if archive is not None:
+            archive.close()
+
+
+def chart_count(workbook_path: str | Path) -> int:
+    """Charts in the file. openpyxl drops charts when it saves a workbook."""
+    try:
+        with zipfile.ZipFile(workbook_path) as archive:
+            return sum(
+                1
+                for name in archive.namelist()
+                if name.startswith("xl/charts/chart") and name.endswith(".xml")
+            )
+    except (zipfile.BadZipFile, OSError):
+        return 0
 
 
 def normalize_text(value: Any) -> str:
@@ -217,24 +266,24 @@ def find_latest_unique_forecast_workbooks(
 def find_header(
     worksheet,
     names: set[str],
+    max_rows: int = 200,
 ) -> tuple[int | None, int | None]:
+    """Find the first cell whose text is one of ``names``.
 
-    for row_index in range(
-        1,
-        worksheet.max_row + 1,
+    Only the top ``max_rows`` rows are searched: headers sit near the top, and
+    sheets with formatting down to row 1,048,576 would otherwise take minutes.
+    """
+
+    for row_index, row in enumerate(
+        worksheet.iter_rows(
+            min_row=1,
+            max_row=min(worksheet.max_row, max_rows),
+            values_only=True,
+        ),
+        start=1,
     ):
-        for column_index in range(
-            1,
-            worksheet.max_column + 1,
-        ):
-            value = normalize_text(
-                worksheet.cell(
-                    row=row_index,
-                    column=column_index,
-                ).value
-            )
-
-            if value in names:
+        for column_index, value in enumerate(row, start=1):
+            if normalize_text(value) in names:
                 return row_index, column_index
 
     return None, None
@@ -272,10 +321,7 @@ def update_forecast_workbook(
 
     workbook_path = Path(workbook_path)
 
-    workbook = load_workbook(
-        workbook_path,
-        data_only=False,
-    )
+    workbook = open_workbook_for_edit(workbook_path)
 
     forecast_type_value = forecast_type_for(target_fiscal_year, forecast_month, forecast_year)
 
@@ -328,7 +374,7 @@ def update_forecast_workbook(
         workbook.save(workbook_path)
 
     finally:
-        workbook.close()
+        close_workbook(workbook)
 
     return {
         "worksheets_updated": worksheets_updated,
@@ -352,10 +398,7 @@ def get_formula_cells(
 
     workbook_path = Path(workbook_path)
 
-    workbook = load_workbook(
-        workbook_path,
-        data_only=False,
-    )
+    workbook = open_workbook_for_edit(workbook_path)
 
     formulas: dict[str, dict[str, str]] = {}
 
@@ -375,7 +418,7 @@ def get_formula_cells(
             formulas[worksheet.title] = sheet_formulas
 
     finally:
-        workbook.close()
+        close_workbook(workbook)
 
     return formulas
 
@@ -526,6 +569,7 @@ def create_forecast_refresh(
     formula_audits: list[dict] = []
     sources_used: list[dict] = []
     older_sources: list[dict] = []
+    warnings: list[dict] = []
 
     worksheets_updated = 0
     forecast_values_updated = 0
@@ -542,55 +586,45 @@ def create_forecast_refresh(
 
         destination = output_path / new_filename
 
+        # Each workbook is built in a temporary file next to its final name and
+        # only moved into place once it is complete. A failure part-way through
+        # leaves no half-made file behind (which "skip" would later keep), and
+        # "replace" keeps last run's file until the new one is ready.
+        building = destination.with_name(f"~building {destination.name}")
+
         try:
 
-            if destination.exists():
+            if destination.exists() and overwrite_mode == "skip":
 
-                if overwrite_mode == "skip":
+                skipped.append(destination)
 
-                    skipped.append(destination)
+                sources_used.append(
+                    {
+                        "family": family,
+                        "source_file": source_file,
+                        "source_month": source_month_abbr,
+                        "destination": destination,
+                        "status": "skipped",
+                    }
+                )
 
-                    sources_used.append(
-                        {
-                            "family": family,
-                            "source_file": source_file,
-                            "source_month": source_month_abbr,
-                            "destination": destination,
-                            "status": "skipped",
-                        }
-                    )
-
-                    continue
-
-                if overwrite_mode == "cancel":
-                    raise RuntimeError(
-                        "Forecast file already exists: " f"{destination.name}"
-                    )
-
-                if overwrite_mode == "replace":
-                    destination.unlink()
+                continue
 
             # ----------------------------------------------
-            # Capture formulas before copying.
+            # Capture formulas and charts before copying.
             # ----------------------------------------------
 
             source_formulas = get_formula_cells(source_file)
+            source_charts = chart_count(source_file)
 
             # ----------------------------------------------
-            # Create new monthly workbook.
+            # Build the new monthly workbook.
             # ----------------------------------------------
 
-            shutil.copy2(
-                source_file,
-                destination,
-            )
-
-            # ----------------------------------------------
-            # Update Forecast Type.
-            # ----------------------------------------------
+            shutil.copy2(source_file, building)
 
             result = update_forecast_workbook(
-                workbook_path=destination,
+                workbook_path=building,
                 target_fiscal_year=fiscal_year,
                 forecast_month=forecast_month,
                 forecast_year=forecast_year,
@@ -600,12 +634,26 @@ def create_forecast_refresh(
             # Confirm formulas survived the creation step.
             # ----------------------------------------------
 
-            destination_formulas = get_formula_cells(destination)
+            destination_formulas = get_formula_cells(building)
 
             formula_audit = compare_formula_preservation(
                 source_formulas=source_formulas,
                 destination_formulas=destination_formulas,
             )
+            charts_lost = source_charts - chart_count(building)
+
+            # ----------------------------------------------
+            # Put it in place. Fails (and keeps the old file)
+            # if the destination is open in Excel.
+            # ----------------------------------------------
+
+            try:
+                os.replace(building, destination)
+            except PermissionError as exc:
+                raise PlainLanguageError(
+                    f'"{destination.name}" is open (in Excel or another program), so it '
+                    "could not be replaced. Close it and run again."
+                ) from exc
 
             formula_audits.append(
                 {
@@ -613,9 +661,23 @@ def create_forecast_refresh(
                     "source_file": source_file.name,
                     "source_month": source_month_abbr,
                     "target_month": target_month_abbr,
+                    "charts_lost": max(charts_lost, 0),
                     **formula_audit,
                 }
             )
+
+            problems = []
+            if not formula_audit["formulas_preserved"]:
+                problems.append(
+                    f"{formula_audit['missing_formula_count'] + formula_audit['changed_formula_count']} "
+                    "formula(s) are missing or changed"
+                )
+            if charts_lost > 0:
+                problems.append(f"{charts_lost} chart(s) were not kept")
+            if result["forecast_values_updated"] == 0:
+                problems.append("no Forecast Type cells were found to update")
+            if problems:
+                warnings.append({"file": destination.name, "problems": problems})
 
             worksheets_updated += result["worksheets_updated"]
 
@@ -653,6 +715,12 @@ def create_forecast_refresh(
                 }
             )
 
+        finally:
+            try:
+                building.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     return {
         "files_created": len(created),
         "files_skipped": len(skipped),
@@ -668,6 +736,7 @@ def create_forecast_refresh(
         "failures": failed,
         "sources_used": sources_used,
         "older_sources": older_sources,
+        "warnings": warnings,
         "formula_audits": formula_audits,
     }
 
@@ -1138,7 +1207,7 @@ def populate_forecast_sheet_from_tableau_rows(
     from openpyxl.formula.translate import Translator
 
     workbook_path = Path(workbook_path)
-    wb = load_workbook(workbook_path, data_only=False)
+    wb = open_workbook_for_edit(workbook_path)
 
     try:
         if excel_sheet_name in wb.sheetnames:
@@ -1282,7 +1351,7 @@ def populate_forecast_sheet_from_tableau_rows(
             "total_row": total_row,
         }
     finally:
-        wb.close()
+        close_workbook(wb)
 
 
 def populate_forecast_sheet_from_audit(

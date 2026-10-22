@@ -727,6 +727,7 @@ class ForecastRefreshView(tb.Frame):
         failures = excel.get("failures") or []
         skipped = excel.get("skipped_files") or []
         older = excel.get("older_sources") or []
+        warnings = excel.get("warnings") or []
 
         lines = [
             f"{period['display']} forecast workbooks:",
@@ -748,15 +749,22 @@ class ForecastRefreshView(tb.Frame):
         if older:
             lines += ["", f"No {excel.get('expected_source_month')} file was found for these, so an older month was used:"]
             lines += [f"  - {item['family']} ({item['source_month']})" for item in older[:8]]
+        if warnings:
+            lines += ["", "Check these before continuing:"]
+            lines += [
+                f"  - {item['file']}: {'; '.join(item['problems'])}" for item in warnings[:8]
+            ]
+            if len(warnings) > 8:
+                lines.append(f"  ...and {len(warnings) - 8} more (see the log).")
         lines += [
             "",
             f"Forecast Start: {period['forecast_start']:%m/%d/%Y}",
             f"Forecast Type: {period['forecast_type']}",
             "",
-            "Tableau is opening. Wait for it to finish loading and refreshing, then click:",
-            "2.  Update Workbooks from Tableau",
+            "Tableau is opening. Wait for it to finish loading and refreshing, "
+            "then click Update for each category under step 2.",
         ]
-        (messagebox.showwarning if failures or older else messagebox.showinfo)(
+        (messagebox.showwarning if failures or older or warnings else messagebox.showinfo)(
             "Forecast Workbooks Created",
             "\n".join(lines),
             parent=self.winfo_toplevel(),
