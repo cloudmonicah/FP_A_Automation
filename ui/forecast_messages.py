@@ -105,12 +105,18 @@ def step3_message(category: str, result: dict) -> tuple[bool, str]:
     if attention:
         lines += ["", "Needs your attention", *attention]
 
+    info = []
     if skipped:
-        lines += ["", "For your information",
-                  f"{len(skipped)} sheet(s) are not checked automatically yet - their Tableau tab "
-                  "needs a department filter. They are listed in the report."]
+        info.append(f"{len(skipped)} sheet(s) are not checked automatically yet - their Tableau tab "
+                    "needs a department filter. They are listed in the report.")
+    if result.get("conflict_copies"):
+        info.append("OneDrive also has another copy of the report (" + ", ".join(result["conflict_copies"])
+                    + "), saved while the report was open somewhere else. Teams may be showing that "
+                    "older copy. Delete it once the report shows this run's results.")
+    if info:
+        lines += ["", "For your information", *info]
 
     if result.get("validation_report"):
         lines += ["", f"Validation report: {result['validation_report']}",
-                  "Use Open Validation Report on this page to open it."]
+                  "Its Summary shows Last Updated; use Open Validation Report on this page to open it."]
     return bool(attention), "\n".join(lines)

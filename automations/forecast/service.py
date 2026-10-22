@@ -670,6 +670,12 @@ def validate_monthly_forecast(
         raw_output_folder=validation_output_folder / "Tableau Raw Copies" / "Step 3",
     )
 
+    from datetime import datetime as _dt
+
+    stamp = _dt.now().strftime("%m/%d/%Y %I:%M %p")
+    for item in result["results"]:
+        item["validated_at"] = stamp
+
     all_results = merge_saved_results(
         output_folder=validation_output_folder,
         forecast_month=period["forecast_month"],
@@ -694,6 +700,11 @@ def validate_monthly_forecast(
     result["period"] = period
     result["validation_output_folder"] = str(validation_output_folder)
     result["validation_report"] = str(report_path)
+    # OneDrive keeps a second copy ("...-<PC name>.xlsx") when the report was
+    # open elsewhere while it was saved; Teams may then show the old version.
+    result["conflict_copies"] = sorted(
+        item.name for item in Path(report_path).parent.glob(f"{Path(report_path).stem}-*.xlsx")
+    )
     return result
 
 

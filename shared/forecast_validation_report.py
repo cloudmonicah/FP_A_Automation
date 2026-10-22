@@ -127,6 +127,7 @@ def write_forecast_validation_report(
         ("Action Required", counts.get("ACTION REQUIRED", 0)),
         ("Not Validated", counts.get("NOT VALIDATED", 0)),
         ("Overall Status", overall),
+        ("Last Updated", datetime.now().strftime("%m/%d/%Y %I:%M %p")),
     ]
     for r, (label, value) in enumerate(rows, start=3):
         ws.cell(r, 1, label).font = Font(bold=True)
@@ -172,6 +173,7 @@ def write_forecast_validation_report(
         "Forecast Type",
         "Note",
         "Category",
+        "Validated At",
     ]
     for col, h in enumerate(headers, 1):
         c = detail.cell(1, col, h)
@@ -195,6 +197,7 @@ def write_forecast_validation_report(
             item.get("forecast_type"),
             item.get("note"),
             item.get("category"),
+            item.get("validated_at"),
         ]
         for col, v in enumerate(vals, 1):
             detail.cell(r, col, v)
@@ -222,6 +225,7 @@ def write_forecast_validation_report(
         11: 26,
         12: 70,
         13: 16,
+        14: 20,
     }
     for col, w in widths.items():
         detail.column_dimensions[get_column_letter(col)].width = w
@@ -229,6 +233,19 @@ def write_forecast_validation_report(
         for c in row:
             c.alignment = Alignment(vertical="top", wrap_text=True)
 
-    wb.save(path)
+    # Save beside the report and swap it in, so a report open in Excel is
+    # reported clearly and a half-written file is never left behind.
+    staged = path.with_name(f"~saving_{path.name}")
+    wb.save(staged)
+    try:
+        os.replace(staged, path)
+    except PermissionError as exc:
+        staged.unlink(missing_ok=True)
+        from shared.friendly_errors import PlainLanguageError
+
+        raise PlainLanguageError(
+            f'The validation report "{path.name}" is open (in Excel, Teams or the browser), '
+            "so it could not be updated. Close it everywhere and click Validate again."
+        ) from exc
     wb.close()
     return path

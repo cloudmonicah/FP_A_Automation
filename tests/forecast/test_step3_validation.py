@@ -345,3 +345,39 @@ def test_part_of_a_tab_is_summed_with_the_consolidated_exclusions():
     total = vs.get_individual_tableau_grand_total(
         rows, exclude={"GL Sub Account Description": ["PREPAID ACQUISITION"]})
     assert total == 84_137
+
+
+def test_report_shows_when_it_was_updated_and_warns_about_onedrive_copies(tmp_path, monkeypatch):
+    from shared.forecast_validation_report import write_forecast_validation_report
+    from ui.forecast_messages import step3_message
+
+    monkeypatch.setattr(service, "run_grouped_individual_validation",
+                        lambda **k: {"results": [{"category": "OPEX", "status": "PASS"}], "workbooks": [],
+                                     "passed": 1, "failed": 0, "action_required": 0, "status": "PASS"})
+    monkeypatch.setattr(service, "get_forecast_validation_output_folder", lambda **k: tmp_path)
+    (tmp_path / "Forecast_Validation_Oct_2026-MONCLOUD-PC.xlsx").write_bytes(b"conflict")
+    result = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["OPEX"])
+    report = load_workbook(result["validation_report"])
+    summary = {row[0]: row[1] for row in report["Validation Summary"].iter_rows(values_only=True)}
+    assert summary["Last Updated"]
+    detail = report["Validation Detail"]
+    header = [c.value for c in detail[1]]
+    assert detail.cell(2, header.index("Validated At") + 1).value == summary["Last Updated"]
+    assert result["conflict_copies"] == ["Forecast_Validation_Oct_2026-MONCLOUD-PC.xlsx"]
+    _, text = step3_message("OPEX", result)
+    assert "OneDrive also has another copy" in text and "Last Updated" in text
+
+
+def test_report_open_elsewhere_is_explained(tmp_path, monkeypatch):
+    import pytest
+
+    from shared import forecast_validation_report as fvr
+    from shared.friendly_errors import PlainLanguageError
+
+    def locked(src, dst):
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(fvr.os, "replace", locked)
+    with pytest.raises(PlainLanguageError, match="is open"):
+        fvr.write_forecast_validation_report({"results": []}, tmp_path, "FY27", 10, 2026, "FY27 Forecast_102026")
+    assert [p.name for p in tmp_path.iterdir()] == []
