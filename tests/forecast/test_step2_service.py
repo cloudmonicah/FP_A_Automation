@@ -46,9 +46,13 @@ def test_changed_forecast_start_stops_step_2_with_a_clear_reason(tmp_path):
     assert "Generate Forecast & Open Tableau" in text and "Nothing was updated" in text
 
 
-def test_forecast_type_chosen_in_tableau_does_not_stop_step_2(tmp_path):
+def test_step_2_stops_if_tableau_has_another_forecast_type(tmp_path):
     twb = _twb(tmp_path, ftype="FY27 Forecast_092026")
-    service.check_consolidated_forecast_period(twb, _period())   # no error
+    period = {**_period(), "tableau_forecast_type": "FY27 Forecast_102026"}
+    with pytest.raises(PlainLanguageError, match="Forecast Type in Tableau is FY27 Forecast_092026"):
+        service.check_consolidated_forecast_period(twb, period)
+    # Matching the page's Tableau Forecast Type is fine, whatever the Excel month.
+    service.check_consolidated_forecast_period(twb, {**_period(), "tableau_forecast_type": "FY27 Forecast_092026"})
 
 
 def _target(tmp_path):

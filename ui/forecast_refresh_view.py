@@ -51,8 +51,8 @@ class ForecastRefreshView(tb.Frame):
 
     One selected forecast period controls:
       - Excel Forecast Type
-      - consolidated Tableau Forecast Start (its Forecast Type filter is
-        chosen by the user in Tableau)
+      - Tableau Forecast Start and Forecast Type filter (the page's
+        "Tableau Forecast Type"), in the consolidated and every individual .twb
       - individual Tableau validation period
     """
 
@@ -133,7 +133,7 @@ class ForecastRefreshView(tb.Frame):
         # Period: month, year and fiscal year on one row.
         period = tb.Frame(panel)
         period.grid(row=0, column=0, columnspan=3, sticky="ew")
-        for col in range(4):
+        for col in range(5):
             period.columnconfigure(col, weight=1, uniform="period")
 
         def field(col, text):
@@ -145,6 +145,7 @@ class ForecastRefreshView(tb.Frame):
         field(1, "Forecast Year")
         field(2, "Fiscal Year")
         field(3, "Forecast Start")
+        field(4, "Tableau Forecast Type")
 
         self.forecast_month_combo = tb.Combobox(
             period, values=list(MONTH_LOOKUP), state="readonly"
@@ -178,6 +179,17 @@ class ForecastRefreshView(tb.Frame):
         self.forecast_start_entry.grid(row=1, column=3, sticky="ew", padx=(8, 0), pady=(2, 0))
         self.forecast_start_entry.bind("<FocusOut>", self._update_period_summary)
         self.forecast_start_entry.bind("<Return>", self._update_period_summary)
+
+        # Forecast Type for the Tableau filters only - consolidated and every
+        # individual workbook. The Excel workbooks' Forecast Type column always
+        # follows the selected month. Defaults to the month's; can be typed over.
+        self.tableau_forecast_type_combo = tb.Combobox(
+            period, textvariable=self.tableau_forecast_type_var
+        )
+        self.tableau_forecast_type_combo.grid(row=1, column=4, sticky="ew", padx=(8, 0), pady=(2, 0))
+        self.tableau_forecast_type_combo.bind("<<ComboboxSelected>>", self._update_period_summary)
+        self.tableau_forecast_type_combo.bind("<FocusOut>", self._update_period_summary)
+        self.tableau_forecast_type_combo.bind("<Return>", self._update_period_summary)
 
         tb.Label(
             panel,
@@ -217,25 +229,6 @@ class ForecastRefreshView(tb.Frame):
         overwrite.grid(row=5, column=1, sticky="w", pady=3)
         overwrite.set("skip")
 
-        # The Forecast Type filter chosen in the consolidated Tableau workbook;
-        # Step 3 uses the same one in every individual workbook.
-        tb.Label(panel, text="Tableau Forecast Type", font=("Segoe UI", 9, "bold")).grid(
-            row=6, column=0, sticky="w", padx=(0, 10), pady=3
-        )
-        type_row = tb.Frame(panel)
-        type_row.grid(row=6, column=1, columnspan=2, sticky="ew", pady=3)
-        self.tableau_forecast_type_combo = tb.Combobox(
-            type_row, textvariable=self.tableau_forecast_type_var, width=26
-        )
-        self.tableau_forecast_type_combo.pack(side="left")
-        self.tableau_forecast_type_combo.bind("<<ComboboxSelected>>", self._update_period_summary)
-        self.tableau_forecast_type_combo.bind("<FocusOut>", self._update_period_summary)
-        tb.Label(
-            type_row,
-            text="Set Tableau's Forecast Type filter to this. Step 3 uses it too.",
-            bootstyle="secondary",
-            font=("Segoe UI", 8),
-        ).pack(side="left", padx=(8, 0))
 
     def _build_steps_panel(self, parent) -> None:
         """Step 1 across the top; steps 2 and 3 as a grid: one column per category."""
@@ -581,7 +574,8 @@ class ForecastRefreshView(tb.Frame):
         self.period_summary_var.set(
             f"Selected Period: {period['display']}\n"
             f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
-            f"Forecast Type: {period['forecast_type']}"
+            f"Forecast Type: {period['forecast_type']} (Excel workbooks); "
+            f"{period['tableau_forecast_type']} (Tableau filters)"
         )
         self._update_validation_output()
 
@@ -695,10 +689,10 @@ class ForecastRefreshView(tb.Frame):
             "Run Monthly Forecast",
             (
                 f"Run the forecast for {period['display']}?\n\n"
-                f"Forecast Start (set in Tableau): {period['forecast_start']:%m/%d/%Y}\n"
-                f"Forecast Type (Excel workbooks): {period['forecast_type']}\n\n"
-                "In the consolidated Tableau workbook you choose the Forecast "
-                "Type filter yourself once it opens; the app does not change it."
+                f"Excel workbooks - Forecast Type column: {period['forecast_type']}\n\n"
+                f"Tableau workbooks (consolidated and individual):\n"
+                f"  Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
+                f"  Forecast Type filter: {period['tableau_forecast_type']}"
             ),
             parent=self.winfo_toplevel(),
         )
@@ -743,6 +737,7 @@ class ForecastRefreshView(tb.Frame):
                 forecast_year=period["forecast_year"],
                 forecast_start=period["forecast_start"],
                 overwrite_mode=inputs["overwrite_mode"],
+                tableau_forecast_type=period["tableau_forecast_type"],
                 open_tableau=True,
             )
             self.after(0, lambda r=result: self._prepare_complete(r))
@@ -764,8 +759,8 @@ class ForecastRefreshView(tb.Frame):
         self.status_description_var.set(
             f"Tableau is open for {period['display']}. "
             f"Forecast Start = {period['forecast_start']:%m/%d/%Y}. "
-            "Choose the Forecast Type filter in Tableau and let it refresh, "
-            "then click Update."
+            f"Forecast Type filter = {period['tableau_forecast_type']}. "
+            "Let Tableau finish refreshing, then click Update."
         )
 
         self.prepare_button.configure(state="normal")
@@ -808,12 +803,12 @@ class ForecastRefreshView(tb.Frame):
                 lines.append(f"  ...and {len(warnings) - 8} more (see the log).")
         lines += [
             "",
-            f"Forecast Start (Tableau): {period['forecast_start']:%m/%d/%Y}",
-            f"Forecast Type (Excel workbooks): {period['forecast_type']}",
+            f"Excel Forecast Type column: {period['forecast_type']}",
+            f"Tableau: Forecast Start {period['forecast_start']:%m/%d/%Y}, "
+            f"Forecast Type filter {period['tableau_forecast_type']}",
             "",
-            f"Tableau is opening. When it has loaded, set its Forecast Type filter to "
-            f"{period['tableau_forecast_type']} and let it refresh, then click Update "
-            "for each category under step 2.",
+            "Tableau is opening. When it has finished loading and refreshing, click "
+            "Update for each category under step 2.",
         ]
         (messagebox.showwarning if failures or older or warnings else messagebox.showinfo)(
             "Forecast Workbooks Created",
@@ -859,9 +854,8 @@ class ForecastRefreshView(tb.Frame):
                 f"Update the {category} workbooks ({len(routes_for([category]))} sheets)?\n\n"
                 "The app copies what the Tableau workbook from Step 1 shows "
                 "(it is opened again if it was closed). Nothing in it is changed.\n\n"
-                "Before continuing, check Tableau's Forecast Type filter is set to "
-                f"{period['tableau_forecast_type']}.\n\n"
-                f"Forecast Start (Tableau): {period['forecast_start']:%m/%d/%Y}\n\n"
+                f"Tableau: Forecast Start {period['forecast_start']:%m/%d/%Y}, "
+                f"Forecast Type filter {period['tableau_forecast_type']}\n\n"
                 "Continue?"
             ),
             parent=self.winfo_toplevel(),
@@ -903,6 +897,7 @@ class ForecastRefreshView(tb.Frame):
                 forecast_year=period["forecast_year"],
                 forecast_start=period["forecast_start"],
                 categories=[inputs["category"]],
+                tableau_forecast_type=period["tableau_forecast_type"],
             )
             self.after(0, lambda r=result, c=inputs["category"]: self._population_complete(c, r))
         except Exception as exc:

@@ -106,13 +106,15 @@ def set_consolidated_forecast_period(
     forecast_month: int,
     forecast_year: int,
     forecast_start: date | None = None,
+    tableau_forecast_type: str | None = None,
 ) -> dict:
     """
-    Set Forecast Start in the consolidated FY Forecast workbook.
+    Set Forecast Start and the Forecast Type filter in the consolidated workbook.
 
-    The Forecast Type filter is left exactly as saved: the person running the
-    forecast chooses it in Tableau once the workbook is open. (The Excel
-    workbooks still get the selected month's Forecast Type in Step 1.)
+    The Forecast Type is the one entered on the page as "Tableau Forecast
+    Type" (default: the selected month's). It is used for every .twb -
+    consolidated and individual - and never for the Excel workbooks' Forecast
+    Type column, which always follows the selected month (Step 1).
     """
     path = Path(tableau_workbook_path)
     period = build_forecast_period(
@@ -121,6 +123,10 @@ def set_consolidated_forecast_period(
         forecast_year=forecast_year,
         forecast_start=forecast_start,
     )
+    target = check_tableau_forecast_type(
+        tableau_forecast_type or period["forecast_type"], period["fiscal_year"]
+    )
+    period["tableau_forecast_type"] = target
 
     # Proven Forecast Start updater + disk verification.
     set_forecast_start_parameter(
@@ -129,7 +135,42 @@ def set_consolidated_forecast_period(
         forecast_year=period["forecast_start"].year,
     )
 
-    period["forecast_type_updates"] = 0
+    tree = ET.parse(path)
+    root = tree.getroot()
+    changed = 0
+
+    # Saved Forecast Type filter selections.
+    for groupfilter in root.iter("groupfilter"):
+        member = str(groupfilter.get("member") or "").strip('"')
+        if re.fullmatch(r"FY\d{2} Forecast_\d{6}", member, re.I):
+            groupfilter.set("member", f'"{target}"')
+            changed += 1
+
+    # Parameter-style Forecast Type, if a workbook uses one.
+    for column in root.iter("column"):
+        caption = re.sub(r"[^a-z0-9]+", "", str(column.get("caption") or "").casefold())
+        if caption != "forecasttype":
+            continue
+        value = str(column.get("value") or "").strip('"')
+        if re.fullmatch(r"FY\d{2} Forecast_\d{6}", value, re.I):
+            column.set("value", f'"{target}"')
+            calculation = column.find("calculation")
+            if calculation is not None and re.search(
+                r"FY\d{2} Forecast_\d{6}", str(calculation.get("formula") or ""), re.I
+            ):
+                calculation.set("formula", f'"{target}"')
+            changed += 1
+
+    if changed:
+        tree.write(path, encoding="utf-8", xml_declaration=True)
+        saved = read_consolidated_forecast_period(path)["forecast_types"]
+        if saved and saved != [target]:
+            raise PlainLanguageError(
+                f"The Forecast Type filter in {path.name} could not be set to {target} "
+                f"(it shows {', '.join(saved)}). Close Tableau and run Step 1 again."
+            )
+
+    period["forecast_type_updates"] = changed
     return period
 
 
@@ -207,7 +248,7 @@ def consolidated_tab_problems(tableau_workbook_path: str | Path, tab_names) -> d
 
 
 def check_consolidated_forecast_period(tableau_workbook_path: str | Path, period: dict) -> None:
-    """Step 2 reads the workbook Step 1 prepared; stop if Forecast Start differs.
+    """Step 2 reads the workbook Step 1 prepared; stop if its period differs from the page.
 
     Step 2 does not rewrite the .twb: Tableau already has it open, and a change
     on disk would not reach the open window, so the copy would use old values.
@@ -220,8 +261,12 @@ def check_consolidated_forecast_period(tableau_workbook_path: str | Path, period
             f"Forecast Start in Tableau is {shown}, but this page has "
             f"{period['forecast_start']:%Y-%m-%d}"
         )
-    # Forecast Type is chosen by the user in the open Tableau window, so it
-    # is not compared here.
+    expected_type = period.get("tableau_forecast_type") or period["forecast_type"]
+    if saved["forecast_types"] and saved["forecast_types"] != [expected_type]:
+        problems.append(
+            f"Forecast Type in Tableau is {', '.join(saved['forecast_types'])}, "
+            f"but the page's Tableau Forecast Type is {expected_type}"
+        )
     if problems:
         raise PlainLanguageError(
             "The Tableau workbook is not set to the period on this page:\n  - "
@@ -241,6 +286,7 @@ def prepare_monthly_forecast(
     forecast_start: date | None = None,
     overwrite_mode: str = "skip",
     open_tableau: bool = True,
+    tableau_forecast_type: str | None = None,
 ) -> dict:
     """Stage 1 + set the consolidated Tableau period + optionally open Tableau."""
     period = build_forecast_period(
@@ -265,6 +311,7 @@ def prepare_monthly_forecast(
         forecast_month=forecast_month,
         forecast_year=forecast_year,
         forecast_start=forecast_start,
+        tableau_forecast_type=tableau_forecast_type,
     )
 
     if open_tableau:
@@ -430,6 +477,7 @@ def _populate_monthly_forecast_from_tableau(
     forecast_year: int,
     forecast_start: date | None = None,
     categories: list[str] | None = None,
+    tableau_forecast_type: str | None = None,
 ) -> dict:
     """
     Step 2 for one category (OPEX, Direct Cost, Revenue, Other) or all.
@@ -446,6 +494,9 @@ def _populate_monthly_forecast_from_tableau(
     )
 
     # Use the workbook Step 1 prepared and opened; never rewrite it here.
+    period["tableau_forecast_type"] = check_tableau_forecast_type(
+        tableau_forecast_type or period["forecast_type"], period["fiscal_year"]
+    )
     check_consolidated_forecast_period(tableau_workbook_path, period)
 
     routes = routes_for(categories)
@@ -654,6 +705,7 @@ def populate_monthly_forecast_from_tableau(
     forecast_year: int,
     forecast_start: date | None = None,
     categories: list[str] | None = None,
+    tableau_forecast_type: str | None = None,
 ) -> dict:
     """Step 2, with a run log saved in the month's Forecast Validation\\Logs folder."""
     import logging
@@ -690,6 +742,7 @@ def populate_monthly_forecast_from_tableau(
             forecast_year=forecast_year,
             forecast_start=forecast_start,
             categories=categories,
+            tableau_forecast_type=tableau_forecast_type,
         )
         logging.getLogger("step2").info(
             "%s: %s sheets updated, %s not updated",
