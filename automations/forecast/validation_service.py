@@ -404,14 +404,15 @@ def _prepare_individual_forecast_copy(
     company: str,
     forecast_start: date,
     forecast_type: str | None = None,
+    filter_company: bool = False,
 ) -> dict:
     """
     Prepare one route-specific temporary individual Tableau workbook.
 
     This follows the proven old _prepare_individual_forecast_copy rules:
-    update only the period controls (Forecast Start and Forecast Type /
-    Forecast Measure) and keep every other saved filter, including Company:
-    each individual tab is already built for its company.
+    update the period controls (Forecast Start and Forecast Type / Forecast
+    Measure) and, only for a group tab shared by ALIV and CBL
+    (``filter_company``), the Company filter. Every other saved filter stays.
     """
     import xml.etree.ElementTree as ET
 
@@ -504,9 +505,40 @@ def _prepare_individual_forecast_copy(
                 value=forecast_start_value,
             )
 
-    # Company is not changed: each individual tab is already built for its
-    # company. Every saved filter except the period controls is left alone.
     filters = target_sheet.findall(".//filter")
+
+    # --------------------------------------------------------
+    # COMPANY - only for a "group" tab that serves both companies
+    # (the mapping uses it for ALIV and for CBL). A tab built for one
+    # company keeps its saved filters exactly as they are.
+    # --------------------------------------------------------
+    company = str(company or "").strip().upper()
+    if filter_company:
+        if company not in {"ALIV", "CBL"}:
+            raise ValueError(
+                f'Confirmed route requires ALIV/CBL company_filter: "{company}".'
+            )
+        company_filters = [
+            item for item in filters if item.get("column", "").endswith("[none:Company:nk]")
+        ]
+        if len(company_filters) != 1:
+            raise ValueError(
+                f'Expected one Company filter on individual forecast tab "{tab}".'
+            )
+        company_filter = company_filters[0]
+        if company_filter.get("class") != "categorical":
+            raise ValueError(
+                f'Unsupported Company filter type on individual forecast tab "{tab}".'
+            )
+        for child in list(company_filter):
+            company_filter.remove(child)
+        ET.SubElement(
+            company_filter,
+            "groupfilter",
+            function="member",
+            level="[none:Company:nk]",
+            member=f'"{company}"',
+        )
 
     # --------------------------------------------------------
     # FORECAST TYPE / FORECAST MEASURE
@@ -648,6 +680,18 @@ def _prepare_individual_forecast_copy(
 
     verify_sheet = verify_sheets[0]
     verify_filters = verify_sheet.findall(".//filter")
+
+    if filter_company:
+        saved_company_members = [
+            member.get("member", "").strip('"')
+            for item in verify_filters
+            if item.get("column", "").endswith("[none:Company:nk]")
+            for member in item.findall(".//groupfilter[@function='member']")
+        ]
+        if saved_company_members != [company]:
+            raise RuntimeError(
+                f'Company "{company}" could not be verified in temporary Tableau copy.'
+            )
 
     if period_mode == "Forecast Type":
         verify_forecast_filters = [
@@ -821,6 +865,15 @@ def run_grouped_individual_validation(
     results = []
     workbook_results = []
 
+    # Individual tabs the mapping uses for both companies show the group
+    # total, so those (only those) get the line's Company filter.
+    from .mapping import FORECAST_ROUTES
+
+    companies_by_tab: dict[tuple, set] = {}
+    for item in [*FORECAST_ROUTES, *routes]:
+        key = (_norm(item.get("individual_tableau_workbook")), _norm(item.get("individual_tableau_worksheet")))
+        companies_by_tab.setdefault(key, set()).add(str(item.get("company_filter") or "").upper())
+
     if forecast_start is None:
         forecast_start = date(forecast_year, forecast_month, 1)
 
@@ -856,6 +909,13 @@ def run_grouped_individual_validation(
                 company=route.get("company_filter"),
                 forecast_start=forecast_start,
                 forecast_type=forecast_type,
+                filter_company=len(
+                    companies_by_tab.get(
+                        (_norm(route["individual_tableau_workbook"]),
+                         _norm(route["individual_tableau_worksheet"])),
+                        set(),
+                    ) & {"ALIV", "CBL"}
+                ) > 1,
             )
 
             workbook_record["forecast_start"] = preparation["forecast_start_value"]

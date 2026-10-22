@@ -272,3 +272,36 @@ def test_grand_total_label_in_another_column():
     rows = [{"Bus Code Name": "SAC", "Company": "ALIV", "Grand Total": "10"},
             {"Bus Code Name": "Grand Total", "Company": None, "Grand Total": "(2,500)"}]
     assert vs.get_individual_tableau_grand_total(rows) == -2500
+
+
+def test_group_tab_gets_the_lines_company(tmp_path):
+    source = tmp_path / "Below the Line.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    out = tmp_path / "copy.twb"
+    vs._prepare_individual_forecast_copy(
+        source=source, destination=out, tab="Monthly Forecast", company="CBL",
+        forecast_start=date(2026, 10, 1), forecast_type="FY27 Forecast_102026", filter_company=True,
+    )
+    members = [g.get("member") for g in ET.parse(out).getroot().iter("groupfilter")
+               if g.get("function") == "member"]
+    assert '"CBL"' in members and '"ALIV"' not in members
+
+
+def test_only_tabs_shared_by_both_companies_are_filtered(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_prepare(**kwargs):
+        seen[(kwargs["tab"], kwargs["company"])] = kwargs["filter_company"]
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(vs, "_prepare_individual_forecast_copy", fake_prepare)
+    monkeypatch.setattr("shared.tableau_temp_copies.temp_twb_path", lambda src, tag: tmp_path / f"{tag}.twb")
+    base = {"category": "Other", "individual_tableau_folder": str(tmp_path), "validation_status": "confirmed",
+            "workbook": "FY27 X_Aug Forecast.xlsx", "excel_sheet": "S"}
+    routes = [
+        {**base, "individual_tableau_workbook": "BTL.twb", "individual_tableau_worksheet": "Group BTL", "company_filter": "CBL"},
+        {**base, "individual_tableau_workbook": "BTL.twb", "individual_tableau_worksheet": "Group BTL", "company_filter": "ALIV"},
+        {**base, "individual_tableau_workbook": "ALIV Consumer SAC.twb", "individual_tableau_worksheet": "ALIV SAC", "company_filter": "ALIV"},
+    ]
+    vs.run_grouped_individual_validation(routes, tmp_path, "Oct", 10, 2026)
+    assert seen == {("Group BTL", "CBL"): True, ("Group BTL", "ALIV"): True, ("ALIV SAC", "ALIV"): False}
