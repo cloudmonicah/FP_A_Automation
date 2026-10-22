@@ -878,6 +878,18 @@ class ForecastRefreshView(tb.Frame):
         )
 
     @staticmethod
+    def _needs_attention(result: dict) -> bool:
+        """Something to look at: a retry, a removed comment or unmerged cells.
+
+        A date format being corrected is housekeeping and not a warning.
+        """
+        passed = result.get("passed", [])
+        return bool(
+            result.get("check_manually")
+            or any(item.get("comments_dropped") or item.get("unmerged") for item in passed)
+        )
+
+    @staticmethod
     def _population_notes(result: dict) -> str:
         """What the user should look at after Step 2, in plain words."""
         notes = []
@@ -961,7 +973,7 @@ class ForecastRefreshView(tb.Frame):
                 parent=self.winfo_toplevel(),
             )
         else:
-            (messagebox.showwarning if self._population_notes(result) else messagebox.showinfo)(
+            (messagebox.showwarning if self._needs_attention(result) else messagebox.showinfo)(
                 f"Update from Tableau - {category}",
                 (
                     f"{category}: {result['workbooks_updated']} workbooks updated.\n"
