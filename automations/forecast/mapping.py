@@ -567,18 +567,20 @@ FORECAST_ROUTES = [
         "company_filter": "ALIV",
         "validation_status": "confirmed",
     },
-    {
-        "tableau_worksheet": "ALIV OTHER REVENUE DETAILS (FINANCE) - Monthly Forecast",
-        "workbook": "FY27 OTHER REVENUE_Aug Forecast.xlsx",
-        "excel_sheet": "ALIV",
-        "individual_tableau_folder": workbook_path("Revenue"),
-        "category": "Revenue",
-        "individual_tableau_workbook": "CBL Group Revenue_Finance View.twb",
-        "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
-        "company_filter": "ALIV",
-        "validation_status": "needs_filter",
-        "validation_filter_note": "Other Revenue only",
-    },
+    # Removed Oct 2026: the ALIV Other Revenue tab no longer exists in the
+    # consolidated FY Forecast workbook, so this line is not forecast here.
+    # {
+    #     "tableau_worksheet": "ALIV OTHER REVENUE DETAILS (FINANCE) - Monthly Forecast",
+    #     "workbook": "FY27 OTHER REVENUE_Aug Forecast.xlsx",
+    #     "excel_sheet": "ALIV",
+    #     "individual_tableau_folder": workbook_path("Revenue"),
+    #     "category": "Revenue",
+    #     "individual_tableau_workbook": "CBL Group Revenue_Finance View.twb",
+    #     "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
+    #     "company_filter": "ALIV",
+    #     "validation_status": "needs_filter",
+    #     "validation_filter_note": "Other Revenue only",
+    # },
     # ---------------- BELOW THE LINE ----------------
     {
         "tableau_worksheet": "CBL Below the Line Details_ Monthly",
