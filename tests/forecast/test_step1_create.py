@@ -128,11 +128,11 @@ def test_replace_recreates_the_file(folders):
     assert load_workbook(target).active["B2"].value == "6000"
 
 
-def test_forecast_type_is_set_to_the_previous_month(folders):
+def test_forecast_type_is_set_to_the_selected_month(folders):
     source, out = folders
     _run(source, out)
     ws = load_workbook(out / "FY27 OPEX Legal_Oct Forecast.xlsx").active
-    assert ws["A2"].value == "FY27 Forecast_092026"
+    assert ws["A2"].value == "FY27 Forecast_102026"
     assert ws["D2"].value == "=SUM(C2:C2)"
 
 

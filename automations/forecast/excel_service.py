@@ -295,12 +295,12 @@ def find_header(
 
 
 def forecast_type_for(fiscal_year: str, forecast_month: int, forecast_year: int) -> str:
-    """The Forecast Type a month's run uses: the previous month's forecast.
+    """The Forecast Type a month's run uses: the selected month itself.
 
-    October 2026 -> "FY27 Forecast_092026"; January 2027 -> "FY27 Forecast_122026".
+    October 2026 -> "FY27 Forecast_102026"; January 2027 -> "FY27 Forecast_012027".
+    Forecast Start is separate (an editable date) and does not change this.
     """
-    month, year = (12, forecast_year - 1) if forecast_month == 1 else (forecast_month - 1, forecast_year)
-    return f"{fiscal_year} Forecast_{month:02d}{year}"
+    return f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
 
 
 def update_forecast_workbook(
@@ -641,6 +641,16 @@ def create_forecast_refresh(
                 destination_formulas=destination_formulas,
             )
             charts_lost = source_charts - chart_count(building)
+            print(
+                f"Formula check {destination.name}: "
+                f"{formula_audit['source_formula_count']} before, "
+                f"{formula_audit['destination_formula_count']} after, "
+                f"{formula_audit['missing_formula_count']} missing, "
+                f"{formula_audit['changed_formula_count']} changed",
+                flush=True,
+            )
+            for item in (formula_audit["missing_formulas"] + formula_audit["changed_formulas"])[:20]:
+                print(f"  {item['sheet']}!{item['cell']}: {item}", flush=True)
 
             # ----------------------------------------------
             # Put it in place. Fails (and keeps the old file)

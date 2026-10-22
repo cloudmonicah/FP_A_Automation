@@ -38,7 +38,7 @@ def test_sets_both_values_and_keeps_tableau_prefixes(twb):
     period = service.set_consolidated_forecast_period(twb, "FY27", 10, 2026, date(2026, 10, 1))
     text = twb.read_text(encoding="utf-8")
     assert "value=\"#2026-10-01#\"" in text
-    assert "FY27 Forecast_092026" in text and "082026" not in text
+    assert "FY27 Forecast_102026" in text and "082026" not in text
     assert "user:ui-domain" in text and "ns0:" not in text
     assert period["forecast_type_updates"] == 1
 

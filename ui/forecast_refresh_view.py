@@ -734,6 +734,8 @@ class ForecastRefreshView(tb.Frame):
             f"  Created: {excel.get('files_created', 0)}",
             f"  Kept (already existed): {len(skipped)}",
             f"  Failed: {len(failures)}",
+            "",
+            self._formula_check_line(excel.get("formula_audits") or []),
         ]
         if failures:
             lines += ["", "These could not be created:"]
@@ -768,6 +770,27 @@ class ForecastRefreshView(tb.Frame):
             "Forecast Workbooks Created",
             "\n".join(lines),
             parent=self.winfo_toplevel(),
+        )
+
+    @staticmethod
+    def _formula_check_line(audits: list[dict]) -> str:
+        """One line saying whether every formula came through Step 1 unchanged."""
+        if not audits:
+            return "Formula check: no new workbooks were created, so nothing was checked."
+        total = sum(item.get("source_formula_count", 0) for item in audits)
+        bad = [item for item in audits if not item.get("formulas_preserved", True)]
+        if not bad:
+            return (
+                f"Formula check: all {total:,} formulas in {len(audits)} workbook(s) "
+                "are the same as last month's."
+            )
+        problems = sum(
+            item.get("missing_formula_count", 0) + item.get("changed_formula_count", 0)
+            for item in bad
+        )
+        return (
+            f"Formula check: {problems:,} of {total:,} formulas are missing or changed "
+            f"in {len(bad)} of {len(audits)} workbook(s) (listed below)."
         )
 
     # =========================================================

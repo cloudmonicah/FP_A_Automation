@@ -3,22 +3,23 @@ from datetime import date
 from automations.forecast import service
 
 
-def test_october_uses_the_september_forecast_type_and_starts_10_1():
+def test_october_uses_the_october_forecast_type_and_starts_10_1():
     october = service.build_forecast_period("FY27", 10, 2026)
     assert october["forecast_start"] == date(2026, 10, 1)
     assert october["forecast_start_tableau"] == "#2026-10-01#"
-    assert october["forecast_type"] == "FY27 Forecast_092026"
+    assert october["forecast_type"] == "FY27 Forecast_102026"
     assert october["display"] == "October 2026"
 
     january = service.build_forecast_period("FY27", 1, 2027)
     assert january["forecast_start"] == date(2027, 1, 1)
-    assert january["forecast_type"] == "FY27 Forecast_122026"
+    assert january["forecast_type"] == "FY27 Forecast_012027"
 
 
 def test_forecast_start_can_be_entered():
     october = service.build_forecast_period("FY27", 10, 2026, forecast_start=date(2026, 9, 1))
     assert october["forecast_start_tableau"] == "#2026-09-01#"
-    assert october["forecast_type"] == "FY27 Forecast_092026"
+    # An edited Forecast Start does not change Forecast Type.
+    assert october["forecast_type"] == "FY27 Forecast_102026"
 
 
 def test_forecast_start_must_be_the_first_of_a_month():
