@@ -70,6 +70,15 @@ def merge_saved_results(
     return [item for category in ordered for item in saved[category]]
 
 
+def _as_date(value):
+    """Tableau's "#2026-09-01#" (or "2026-09-01") as a real date; anything else as is."""
+    text = str(value or "").strip().strip("#")
+    try:
+        return datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return value
+
+
 def write_forecast_validation_report(
     validation_result,
     output_folder,
@@ -193,7 +202,7 @@ def write_forecast_validation_report(
             item.get("variance"),
             item.get("status"),
             item.get("period_mode"),
-            item.get("forecast_start"),
+            _as_date(item.get("forecast_start")),
             item.get("forecast_type"),
             item.get("note"),
             item.get("category"),
@@ -204,6 +213,7 @@ def write_forecast_validation_report(
             detail.cell(r, col).border = edge
         for col in (5, 6, 7):
             detail.cell(r, col).number_format = "$#,##0.00;[Red]-$#,##0.00"
+        detail.cell(r, 10).number_format = "mm/dd/yyyy"
         s = str(item.get("status") or "").upper()
         sc = detail.cell(r, 8)
         sc.font = Font(bold=True)

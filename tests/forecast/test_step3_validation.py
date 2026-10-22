@@ -381,3 +381,15 @@ def test_report_open_elsewhere_is_explained(tmp_path, monkeypatch):
     with pytest.raises(PlainLanguageError, match="is open"):
         fvr.write_forecast_validation_report({"results": []}, tmp_path, "FY27", 10, 2026, "FY27 Forecast_102026")
     assert [p.name for p in tmp_path.iterdir()] == []
+
+
+def test_forecast_start_is_a_date_in_the_report(tmp_path):
+    from shared.forecast_validation_report import write_forecast_validation_report
+
+    path = write_forecast_validation_report(
+        {"results": [{"status": "PASS", "forecast_start": "#2026-09-01#", "category": "Other"}]},
+        tmp_path, "FY27", 10, 2026, "FY27 Forecast_092026")
+    detail = load_workbook(path)["Validation Detail"]
+    header = [c.value for c in detail[1]]
+    cell = detail.cell(2, header.index("Forecast Start") + 1)
+    assert cell.value == datetime(2026, 9, 1) and cell.number_format == "mm/dd/yyyy"
