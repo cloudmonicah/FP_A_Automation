@@ -460,11 +460,29 @@ FORECAST_ROUTES = [
         "excel_sheet": "Mobile SAC_Finance",
         "individual_tableau_folder": workbook_path("SAC"),
         "category": "Other",
-        "individual_tableau_workbook": "Cable Bahamas Group_SAC.twb",
+        "individual_tableau_workbook": "ALIV SAC Finance.twb",
         "individual_tableau_worksheet": "ALIV SAC Monthly Forecast",
         "company_filter": "ALIV",
-        "validation_status": "needs_filter",
-        "validation_filter_note": "Finance SAC",
+        "validation_status": "confirmed",
+        # The tab shows all ALIV SAC. Finance SAC is the same lines the
+        # consolidated "ALIV MOBILE SAC _FINANCE" tab keeps: everything except
+        # these Consumer/Corporate handset sub-accounts.
+        "individual_exclude": {
+            "GL Sub Account Description": [
+                "CONSUMER POSTPAID IFRS H/SET DEF AMORT COSTS",
+                "CORPORATE POSTPAID ACQUISITION",
+                "CORPORATE POSTPAID IFRS H/SET DEF AMORT COSTS",
+                "DEVICE REVENUE-CORPORATE POSTPAID ACQUISITION",
+                "DEVICE REVENUE-PREPAID ACQUISITION",
+                "HANDSET LANDED COST-PRE ACQ",
+                "HANDSET PROMOTIONS & DISCOUNTS",
+                "HANDSET STAFF COMMISSIONS CONSUMER",
+                "HANDSET STAFF COMMISSIONS CORPORATE",
+                "IFRS 15-EQUIPMENT REVENUE-CONSUMER",
+                "IFRS 15-EQUIPMENT REVENUE-CORPORATE",
+                "PREPAID ACQUISITION",
+            ]
+        },
     },
     {
         "tableau_worksheet": "ALIV CORPORATE SAC Monthly Forecast",

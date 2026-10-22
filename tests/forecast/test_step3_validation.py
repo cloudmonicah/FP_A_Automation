@@ -287,21 +287,61 @@ def test_group_tab_gets_the_lines_company(tmp_path):
     assert '"CBL"' in members and '"ALIV"' not in members
 
 
-def test_only_tabs_shared_by_both_companies_are_filtered(tmp_path, monkeypatch):
-    seen = {}
+def test_step_3_works_in_the_source_workbook_without_copies(tmp_path, monkeypatch):
+    seen = []
 
     def fake_prepare(**kwargs):
-        seen[(kwargs["tab"], kwargs["company"])] = kwargs["filter_company"]
+        seen.append((kwargs["source"], kwargs["destination"]))
         raise RuntimeError("stop here")
 
     monkeypatch.setattr(vs, "_prepare_individual_forecast_copy", fake_prepare)
-    monkeypatch.setattr("shared.tableau_temp_copies.temp_twb_path", lambda src, tag: tmp_path / f"{tag}.twb")
-    base = {"category": "Other", "individual_tableau_folder": str(tmp_path), "validation_status": "confirmed",
-            "workbook": "FY27 X_Aug Forecast.xlsx", "excel_sheet": "S"}
-    routes = [
-        {**base, "individual_tableau_workbook": "BTL.twb", "individual_tableau_worksheet": "Group BTL", "company_filter": "CBL"},
-        {**base, "individual_tableau_workbook": "BTL.twb", "individual_tableau_worksheet": "Group BTL", "company_filter": "ALIV"},
-        {**base, "individual_tableau_workbook": "ALIV Consumer SAC.twb", "individual_tableau_worksheet": "ALIV SAC", "company_filter": "ALIV"},
-    ]
-    vs.run_grouped_individual_validation(routes, tmp_path, "Oct", 10, 2026)
-    assert seen == {("Group BTL", "CBL"): True, ("Group BTL", "ALIV"): True, ("ALIV SAC", "ALIV"): False}
+    route = {"category": "Other", "individual_tableau_folder": str(tmp_path), "validation_status": "confirmed",
+             "workbook": "FY27 X_Aug Forecast.xlsx", "excel_sheet": "S", "company_filter": "CBL",
+             "individual_tableau_workbook": "BTL.twb", "individual_tableau_worksheet": "Group BTL"}
+    vs.run_grouped_individual_validation([route], tmp_path, "Oct", 10, 2026)
+    assert seen == [(tmp_path / "BTL.twb", tmp_path / "BTL.twb")]
+    assert list(tmp_path.iterdir()) == []          # nothing copied or left behind
+
+
+MONTHS = ["Jul-26", "Aug-26"]
+
+
+def _row(*labels, total):
+    keys = ["Company", "GL Account Mapping", "GL Sub Segment code"]
+    return {**dict(zip(keys, labels)), **{m: "" for m in MONTHS}, "Grand Total": total}
+
+
+def test_group_tab_uses_the_companys_subtotal_row():
+    rows = [_row("ALIV", "DEPRECIATION", "900001", total="10"),
+            _row("ALIV", "Total", "Total", total="39,622,161"),
+            _row("CBL", "DEPRECIATION", "900001", total="20"),
+            _row("CBL", "Total", "Total", total="51,006,161"),
+            _row("Grand Total", "Total", "Total", total="90,628,322")]
+    assert vs.get_individual_tableau_grand_total(rows, company="ALIV") == 39_622_161
+    assert vs.get_individual_tableau_grand_total(rows, company="CBL") == 51_006_161
+    assert vs.get_individual_tableau_grand_total(rows) == 90_628_322
+
+
+def test_single_company_tab_still_uses_its_grand_total():
+    rows = [_row("ALIV", "X", "1", total="5"), _row("ALIV", "Total", "Total", total="5"),
+            _row("Grand Total", "Total", "Total", total="5")]
+    assert vs.get_individual_tableau_grand_total(rows, company="ALIV") == 5
+
+
+def test_one_top_level_group_without_grand_total_uses_its_subtotal():
+    # ALIV Consumer SAC: only CONSUMER is shown, so Tableau has no Grand Total row.
+    rows = [{"GL FS Revenue by Type": "CONSUMER", "GL FS Type": "DEVICE COST", "GL Sub Segment code": "500001",
+             "Jul-26": "1", "Grand Total": "8,202,848"},
+            {"GL FS Revenue by Type": "CONSUMER", "GL FS Type": "Total", "GL Sub Segment code": "Total",
+             "Jul-26": "1", "Grand Total": "2,118,104"}]
+    assert vs.get_individual_tableau_grand_total(rows, company="ALIV") == 2_118_104
+
+
+def test_part_of_a_tab_is_summed_with_the_consolidated_exclusions():
+    rows = [{"GL Account Mapping": "OTHER CHARGES", "GL Sub Account Description": "OTHER CHARGES", "Grand Total": "60,000"},
+            {"GL Account Mapping": "DEVICE COST", "GL Sub Account Description": "PREPAID ACQUISITION", "Grand Total": "25,000"},
+            {"GL Account Mapping": "INVENTORY SAC PROVISION", "GL Sub Account Description": "INVENTORY SAC PROVISION", "Grand Total": "24,137"},
+            {"GL Account Mapping": "Total", "GL Sub Account Description": "Total", "Grand Total": "109,137"}]
+    total = vs.get_individual_tableau_grand_total(
+        rows, exclude={"GL Sub Account Description": ["PREPAID ACQUISITION"]})
+    assert total == 84_137

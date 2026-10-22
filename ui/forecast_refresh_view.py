@@ -968,8 +968,8 @@ class ForecastRefreshView(tb.Frame):
                 f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
                 f"Forecast Type: {period['tableau_forecast_type']} (same as the consolidated "
                 "workbook)\n\n"
-                "Each individual Tableau workbook is opened as a temporary copy set to "
-                "this period, and its Grand Total is compared to the sheet's Grand Total "
+                "Each individual Tableau workbook is set to this period and saved, then "
+                "opened, and its total is compared to the sheet's Grand Total "
                 "(within $1,000). The month's report keeps the other categories' results."
             ),
             parent=self.winfo_toplevel(),

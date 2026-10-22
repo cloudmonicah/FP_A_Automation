@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from . import tableau_service as _tableau_xml  # noqa: F401  registers Tableau's "user:" XML prefix for saves
 from shared.friendly_errors import explain
 
 from datetime import date, datetime
@@ -192,36 +194,82 @@ def get_excel_forecast_grand_total(
 # ============================================================
 
 
+def _label_columns(row: dict) -> list:
+    """The row's label columns (everything before the month and total figures)."""
+    return [key for key in row if key != "Grand Total" and not _looks_like_month(key)]
+
+
+def _looks_like_month(header) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z]{3}[- ]\d{2,4}", str(header or "").strip()))
+
+
+def _is_total_label(value) -> bool:
+    return _norm(value) in {"total", "grand total"}
+
+
 def get_individual_tableau_grand_total(
     tableau_rows: list[dict],
+    company: str | None = None,
+    exclude: dict | None = None,
 ) -> float:
     """
-    Return Tableau's authoritative final Grand Total.
+    The individual tab's total for this sheet, read from the copied table.
 
-    Stage 5A discovery confirmed the individual Legal
-    crosstabs contain a final row where:
-
-        Company = Grand Total
-
-    and the final value is stored in:
-
-        Grand Total
-
-    Intermediate Tableau subtotal rows are intentionally ignored.
+    In order:
+      * ``exclude`` (e.g. {"GL Sub Account Description": [...]}): the sum of
+        the tab's detail lines without those values - for a sheet that is
+        part of a tab (Mobile SAC_Finance), defined like its consolidated tab;
+      * ``company`` on a group tab (a Company column with one subtotal row per
+        company, e.g. "CBL / Total / Total"): that company's subtotal row;
+      * the row labelled "Grand Total" (in any label column);
+      * a tab with a single top-level group (e.g. only CONSUMER) has no Grand
+        Total row - its one top-level subtotal row is the total.
     """
 
     if not tableau_rows:
         raise RuntimeError("Individual Tableau crosstab returned no rows.")
 
-    grand_total_row = None
+    labels = _label_columns(tableau_rows[0])
 
+    if exclude:
+        excluded = {column: {_norm(v) for v in values} for column, values in exclude.items()}
+        missing = [column for column in excluded if column not in tableau_rows[0]]
+        if missing:
+            raise RuntimeError(f"Individual Tableau crosstab has no column {missing[0]} to filter on.")
+        total = 0.0
+        for row in tableau_rows:
+            if any(_is_total_label(row.get(column)) for column in labels):
+                continue
+            if any(_norm(row.get(column)) in values for column, values in excluded.items()):
+                continue
+            total += _number(row.get("Grand Total")) or 0.0
+        return total
+
+    if company and "Company" in tableau_rows[0]:
+        others = [column for column in labels if column != "Company"]
+        subtotals = [
+            row for row in tableau_rows
+            if _norm(row.get("Company")) == _norm(company)
+            and others and all(_is_total_label(row.get(column)) for column in others)
+        ]
+        companies = {_norm(row.get("Company")) for row in tableau_rows} - {"grand total", ""}
+        if len(subtotals) == 1 and len(companies) > 1:
+            return _number(subtotals[0].get("Grand Total"))
+
+    grand_total_row = None
     for row in tableau_rows:
-        # Tableau puts the "Grand Total" label in the first column of the row
-        # (Company on most tabs, GL Account Mapping on ALIV Head Office, ...),
-        # so look in every column except the Grand Total value itself.
-        labels = [value for key, value in row.items() if key != "Grand Total"]
-        if any(_norm(value) == "grand total" for value in labels):
+        if any(_norm(row.get(column)) == "grand total" for column in labels):
             grand_total_row = row
+
+    if grand_total_row is None and labels:
+        top_level = [
+            row for row in tableau_rows
+            if not _is_total_label(row.get(labels[0]))
+            and len(labels) > 1
+            and all(_is_total_label(row.get(column)) for column in labels[1:])
+        ]
+        if len(top_level) == 1:
+            grand_total_row = top_level[0]
 
     if grand_total_row is None:
         raise RuntimeError(
@@ -349,7 +397,11 @@ def validate_route_from_tableau_rows(
         worksheet_name=route["excel_sheet"],
     )
 
-    raw_tableau_total = get_individual_tableau_grand_total(tableau_rows)
+    raw_tableau_total = get_individual_tableau_grand_total(
+        tableau_rows,
+        company=route.get("company_filter"),
+        exclude=route.get("individual_exclude"),
+    )
 
     adjusted_tableau_total = apply_validation_sign_rule(
         tableau_total=raw_tableau_total,
@@ -381,7 +433,7 @@ def validate_route_from_tableau_rows(
 #
 # V1 intentionally preserves the proven old validation behavior:
 #
-#   * one temporary TWB per validation route
+#   * each individual TWB is set and saved in place (no copies)
 #   * Forecast Start = selected month's first day
 #   * Forecast Type = FYxx Forecast_MMYYYY when the tab uses it
 #   * otherwise Forecast Measure = "Forecast"
@@ -407,7 +459,7 @@ def _prepare_individual_forecast_copy(
     filter_company: bool = False,
 ) -> dict:
     """
-    Prepare one route-specific temporary individual Tableau workbook.
+    Set one individual Tableau workbook to the period, saving the file itself.
 
     This follows the proven old _prepare_individual_forecast_copy rules:
     update the period controls (Forecast Start and Forecast Type / Forecast
@@ -663,7 +715,7 @@ def _prepare_individual_forecast_copy(
 
     if forecast_start_value not in saved_start_values:
         raise RuntimeError(
-            "Forecast Start could not be verified in temporary Tableau copy: "
+            "Forecast Start could not be verified in the Tableau workbook: "
             f"{destination}"
         )
 
@@ -675,7 +727,7 @@ def _prepare_individual_forecast_copy(
 
     if len(verify_sheets) != 1:
         raise RuntimeError(
-            f'Could not verify worksheet "{tab}" after saving temporary TWB.'
+            f'Could not verify worksheet "{tab}" after saving the Tableau workbook.'
         )
 
     verify_sheet = verify_sheets[0]
@@ -690,7 +742,7 @@ def _prepare_individual_forecast_copy(
         ]
         if saved_company_members != [company]:
             raise RuntimeError(
-                f'Company "{company}" could not be verified in temporary Tableau copy.'
+                f'Company "{company}" could not be verified in the Tableau workbook.'
             )
 
     if period_mode == "Forecast Type":
@@ -710,7 +762,7 @@ def _prepare_individual_forecast_copy(
 
         if forecast_type_value not in saved_forecast_members:
             raise RuntimeError(
-                "Forecast Type could not be verified in temporary Tableau copy.\n"
+                "Forecast Type could not be verified in the Tableau workbook.\n"
                 f"Expected: {forecast_type_value}\n"
                 f"Workbook: {destination}"
             )
@@ -730,7 +782,10 @@ def _prepare_individual_forecast_copy(
 def close_individual_tableau_workbook(
     tableau_workbook_path: str | Path,
 ) -> dict:
-    """Close only the exact validation Tableau workbook, discarding UI changes."""
+    """Close the validation workbook without saving Tableau's screen state.
+
+    The period settings were already saved in the file before it was opened.
+    """
     import time
     from .tableau_service import _get_tableau_window, _Desktop
 
@@ -821,7 +876,7 @@ def run_grouped_individual_validation(
 
     The function name is retained for compatibility with the existing
     Stage 5B test. Internally V1 intentionally validates route-by-route
-    using one temporary TWB per route, matching the old proven behavior.
+    route by route, setting and saving each individual TWB in place.
     """
     import time
     from uuid import uuid4
@@ -865,14 +920,6 @@ def run_grouped_individual_validation(
     results = []
     workbook_results = []
 
-    # Individual tabs the mapping uses for both companies show the group
-    # total, so those (only those) get the line's Company filter.
-    from .mapping import FORECAST_ROUTES
-
-    companies_by_tab: dict[tuple, set] = {}
-    for item in [*FORECAST_ROUTES, *routes]:
-        key = (_norm(item.get("individual_tableau_workbook")), _norm(item.get("individual_tableau_worksheet")))
-        companies_by_tab.setdefault(key, set()).add(str(item.get("company_filter") or "").upper())
 
     if forecast_start is None:
         forecast_start = date(forecast_year, forecast_month, 1)
@@ -883,15 +930,17 @@ def run_grouped_individual_validation(
             / route["individual_tableau_workbook"]
         )
 
-        from shared.tableau_temp_copies import temp_twb_path
-
-        temporary = temp_twb_path(source, "Validation")
+        # Work directly in the individual workbook (no copies): its Forecast
+        # Start and Forecast Type are set and saved in the file itself, then it
+        # is opened, copied and closed. Company is never changed - a group tab
+        # is read by its company subtotal row instead.
+        temporary = source
 
         opened = False
 
         workbook_record = {
             "source": str(source),
-            "temporary": str(temporary),
+            "workbook": str(source),
             "routes": 1,
             "worksheet": route["individual_tableau_worksheet"],
             "company": route.get("company_filter"),
@@ -909,13 +958,6 @@ def run_grouped_individual_validation(
                 company=route.get("company_filter"),
                 forecast_start=forecast_start,
                 forecast_type=forecast_type,
-                filter_company=len(
-                    companies_by_tab.get(
-                        (_norm(route["individual_tableau_workbook"]),
-                         _norm(route["individual_tableau_worksheet"])),
-                        set(),
-                    ) & {"ALIV", "CBL"}
-                ) > 1,
             )
 
             workbook_record["forecast_start"] = preparation["forecast_start_value"]
@@ -1002,22 +1044,6 @@ def run_grouped_individual_validation(
                     workbook_record["error"] += f" | Close warning: {warning}"
                 else:
                     workbook_record["error"] = f"Close warning: {warning}"
-
-            # Delete only after Tableau has released the temp TWB.
-            if workbook_record["closed"] and temporary.exists():
-                try:
-                    temporary.unlink()
-                except Exception as exc:
-                    explain(exc)
-                    cleanup_warning = (
-                        "A temporary file could not be removed; it can be "
-                        "deleted manually."
-                    )
-
-                    if workbook_record["error"]:
-                        workbook_record["error"] += f" | {cleanup_warning}"
-                    else:
-                        workbook_record["error"] = cleanup_warning
 
             workbook_results.append(workbook_record)
 
