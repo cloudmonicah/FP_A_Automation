@@ -198,6 +198,55 @@ def read_consolidated_forecast_period(tableau_workbook_path: str | Path) -> dict
     return {"forecast_start_tableau": start, "forecast_types": types}
 
 
+def _tab_key(name) -> str:
+    """Tab names compare the way Tableau's menu search does: case and spacing ignored."""
+    return " ".join(str(name or "").lower().split())
+
+
+def consolidated_tab_problems(tableau_workbook_path: str | Path, tab_names) -> dict[str, str]:
+    """{tab: plain reason} for mapped tabs the saved .twb doesn't have, or hides.
+
+    Checked before copying, so a renamed or hidden tab is named precisely
+    (with the closest real tab names) instead of failing inside Tableau.
+    """
+    import difflib
+
+    root = ET.parse(Path(tableau_workbook_path)).getroot()
+    sheets = {}
+    for sheet in root.iter("worksheet"):
+        name = sheet.get("name")
+        if name:
+            sheets.setdefault(_tab_key(name), name)
+    hidden = {
+        _tab_key(window.get("name"))
+        for window in root.iter("window")
+        if window.get("class") == "worksheet" and str(window.get("hidden", "")).lower() == "true"
+    }
+    workbook_name = Path(tableau_workbook_path).name
+    problems = {}
+    for tab in tab_names:
+        key = _tab_key(tab)
+        if key in sheets:
+            if key in hidden:
+                problems[tab] = (
+                    f'The tab "{sheets[key]}" is hidden in {workbook_name}, so the app can\'t '
+                    "open it. In Tableau, right-click the tab (or the dashboard that uses it) and "
+                    "choose Unhide, save the workbook, then run Step 1 and Update again."
+                )
+            continue
+        close = difflib.get_close_matches(key, list(sheets), n=3, cutoff=0.6)
+        hint = (
+            " The closest tab names are: " + ", ".join(f'"{sheets[c]}"' for c in close) + "."
+            if close
+            else ""
+        )
+        problems[tab] = (
+            f'{workbook_name} has no tab called "{tab}".{hint} Rename the tab in Tableau to '
+            "match, or tell support to change the mapping."
+        )
+    return problems
+
+
 def check_consolidated_forecast_period(tableau_workbook_path: str | Path, period: dict) -> None:
     """Step 2 reads the workbook Step 1 prepared; stop if it is set to another period.
 
@@ -446,11 +495,20 @@ def populate_monthly_forecast_from_tableau(
     routes = routes_for(categories)
     worksheet_names = [route["tableau_worksheet"] for route in routes]
 
+    # Tabs missing from (or hidden in) the saved workbook are reported now,
+    # with the closest real names, and not tried in Tableau.
+    tab_problems = consolidated_tab_problems(tableau_workbook_path, worksheet_names)
+    worksheet_names = [name for name in worksheet_names if name not in tab_problems]
+
     _make_sure_tableau_is_open(tableau_workbook_path)
 
-    extracts, extract_errors = extract_forecast_worksheets(
-        tableau_workbook_path=tableau_workbook_path,
-        worksheet_names=worksheet_names,
+    extracts, extract_errors = (
+        extract_forecast_worksheets(
+            tableau_workbook_path=tableau_workbook_path,
+            worksheet_names=worksheet_names,
+        )
+        if worksheet_names
+        else ({}, {})
     )
 
     # A tab that failed to copy is tried once more, after the others.
@@ -484,6 +542,10 @@ def populate_monthly_forecast_from_tableau(
         target = folder / target_name
         tab = route["tableau_worksheet"]
         base = {"workbook": target_name, "worksheet": route["excel_sheet"], "tableau_worksheet": tab}
+
+        if tab in tab_problems:
+            failed.append({**base, "error": tab_problems[tab]})
+            continue
 
         # Do not touch the Excel sheet if its Tableau source failed.
         if tab in extract_errors:

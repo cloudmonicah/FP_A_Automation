@@ -126,3 +126,30 @@ def test_missing_workbook_says_to_run_step_1(tmp_path):
 def test_unknown_errors_still_give_a_specific_reason():
     reason = service._reason(KeyError("Jul-26"))
     assert "Something unexpected" not in reason and "Jul-26" in reason
+
+
+TABS = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook>
+  <worksheets>
+    <worksheet name='ALIV Head Office' />
+    <worksheet name='CBL  Head Office' />
+    <worksheet name='ALIV Legal' />
+  </worksheets>
+  <windows>
+    <window class='worksheet' name='ALIV Legal' />
+    <window class='worksheet' hidden='true' name='ALIV Head Office' />
+    <window class='dashboard' name='Overview' />
+  </windows>
+</workbook>
+"""
+
+
+def test_missing_or_hidden_tabs_are_named_precisely(tmp_path):
+    twb = tmp_path / "FY27 Forecast.twb"
+    twb.write_text(TABS, encoding="utf-8")
+    problems = service.consolidated_tab_problems(
+        twb, ["ALIV Legal", "cbl head office", "ALIV Head Office", "ALIV Head Offices", "Board"])
+    assert set(problems) == {"ALIV Head Office", "ALIV Head Offices", "Board"}
+    assert "is hidden in FY27 Forecast.twb" in problems["ALIV Head Office"] and "Unhide" in problems["ALIV Head Office"]
+    assert 'no tab called "ALIV Head Offices". The closest tab names are: "ALIV Head Office"' in problems["ALIV Head Offices"]
+    assert problems["Board"].endswith("tell support to change the mapping.")
