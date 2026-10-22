@@ -1,9 +1,11 @@
 from __future__ import annotations
-from shared.friendly_errors import PlainLanguageError, explain
+from shared.friendly_errors import GENERIC, PlainLanguageError, explain, friendly
 
 from datetime import date
 from pathlib import Path
+import os
 import re
+import shutil
 import xml.etree.ElementTree as ET
 
 from openpyxl import Workbook
@@ -16,6 +18,7 @@ from .excel_service import (
 from .mapping import FORECAST_CATEGORIES, routes_for
 from .tableau_service import (
     extract_forecast_worksheets,
+    find_tableau_parameter,
     open_tableau_workbook,
     set_forecast_start_parameter,
 )
@@ -171,6 +174,58 @@ def set_consolidated_forecast_period(
     return period
 
 
+def read_consolidated_forecast_period(tableau_workbook_path: str | Path) -> dict:
+    """The Forecast Start and Forecast Type saved in the consolidated .twb."""
+    path = Path(tableau_workbook_path)
+    try:
+        root = ET.parse(path).getroot()
+    except FileNotFoundError as exc:
+        raise PlainLanguageError(f"The Tableau Forecast Workbook was not found: {path}") from exc
+    except ET.ParseError as exc:
+        raise PlainLanguageError(
+            f'The Tableau Forecast Workbook "{path.name}" could not be read; it may be '
+            "damaged. Run Step 1 again, or pick the right .twb file."
+        ) from exc
+    parameter = find_tableau_parameter(root=root, parameter_caption="Forecast Start")
+    start = parameter.attrib.get("value") if parameter is not None else None
+    types = sorted(
+        {
+            str(item.get("member") or "").strip('"')
+            for item in root.iter("groupfilter")
+            if re.fullmatch(r"FY\d{2} Forecast_\d{6}", str(item.get("member") or "").strip('"'), re.I)
+        }
+    )
+    return {"forecast_start_tableau": start, "forecast_types": types}
+
+
+def check_consolidated_forecast_period(tableau_workbook_path: str | Path, period: dict) -> None:
+    """Step 2 reads the workbook Step 1 prepared; stop if it is set to another period.
+
+    Step 2 does not rewrite the .twb: Tableau already has it open, and a change
+    on disk would not reach the open window, so the copy would use old values.
+    """
+    saved = read_consolidated_forecast_period(tableau_workbook_path)
+    problems = []
+    if saved["forecast_start_tableau"] != period["forecast_start_tableau"]:
+        shown = (saved["forecast_start_tableau"] or "not set").strip("#")
+        problems.append(
+            f"Forecast Start in Tableau is {shown}, but this page has "
+            f"{period['forecast_start']:%Y-%m-%d}"
+        )
+    if saved["forecast_types"] and saved["forecast_types"] != [period["forecast_type"]]:
+        problems.append(
+            f"Forecast Type in Tableau is {', '.join(saved['forecast_types'])}, "
+            f"but this page has {period['forecast_type']}"
+        )
+    if problems:
+        raise PlainLanguageError(
+            "The Tableau workbook is not set to the period on this page:\n  - "
+            + "\n  - ".join(problems)
+            + "\n\nNothing was updated. Close Tableau, click "
+            "\"1. Generate Forecast & Open Tableau\" again for this period, then Update."
+        )
+
+
 def prepare_monthly_forecast(
     source_folder: str | Path,
     output_folder: str | Path,
@@ -300,6 +355,68 @@ def _make_sure_tableau_is_open(tableau_workbook_path) -> None:
     wait_for_tableau_workbook(tableau_workbook_path)
 
 
+def _reason(error) -> str:
+    """A specific, plain reason. Never the bare "something went wrong"."""
+    text = friendly(error)
+    if text != GENERIC:
+        return text
+    raw = str(error).strip().splitlines()[0] if str(error).strip() else type(error).__name__
+    raw = re.sub(r"^\w+(Error|Exception): ", "", raw)
+    return f"an unexpected problem stopped it ({raw[:200]}). The details are in the log."
+
+
+def _paste_route_safely(target: Path, excel_sheet: str, audit_path: Path,
+                        tableau_worksheet: str, fiscal_year: str) -> tuple[dict, bool]:
+    """Paste one Tableau tab into one sheet without ever leaving it half-updated.
+
+    The paste is done on a copy, which replaces the workbook only when it is
+    complete. An unexpected failure is tried once more; returns (result, retried).
+    Problems the user has to fix (file open, sheet missing, layout) are not retried.
+    """
+    if not target.is_file():
+        raise PlainLanguageError(
+            f'The workbook "{target.name}" is not in the Forecast Output Folder. '
+            "Run Step 1 first, or check that the folder is this month's."
+        )
+    working = target.with_name(f"~updating {target.name}")
+    last_error = None
+    for attempt in (1, 2):
+        try:
+            shutil.copy2(target, working)
+            result = populate_forecast_sheet_from_audit(
+                workbook_path=working,
+                excel_sheet_name=excel_sheet,
+                audit_workbook_path=audit_path,
+                tableau_worksheet_name=tableau_worksheet,
+                fiscal_year=fiscal_year,
+            )
+            try:
+                os.replace(working, target)
+            except PermissionError as exc:
+                raise PlainLanguageError(
+                    f'"{target.name}" is open in Excel (or another program), so it '
+                    "could not be updated. Close it and click Update again."
+                ) from exc
+            return result, attempt > 1
+        except (PlainLanguageError, PermissionError) as exc:
+            if isinstance(exc, PermissionError):
+                raise PlainLanguageError(
+                    f'"{target.name}" is open in Excel (or another program), so it '
+                    "could not be updated. Close it and click Update again."
+                ) from exc
+            raise
+        except Exception as exc:
+            last_error = exc
+            print(f"[STEP 2] {target.name} / {excel_sheet}: attempt {attempt} failed: "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+        finally:
+            try:
+                working.unlink(missing_ok=True)
+            except OSError:
+                pass
+    raise last_error
+
+
 def populate_monthly_forecast_from_tableau(
     forecast_folder: str | Path,
     tableau_workbook_path: str | Path,
@@ -323,14 +440,8 @@ def populate_monthly_forecast_from_tableau(
         forecast_start=forecast_start,
     )
 
-    # Re-apply the selected period immediately before extraction.
-    period = set_consolidated_forecast_period(
-        tableau_workbook_path=tableau_workbook_path,
-        fiscal_year=fiscal_year,
-        forecast_month=forecast_month,
-        forecast_year=forecast_year,
-        forecast_start=forecast_start,
-    )
+    # Use the workbook Step 1 prepared and opened; never rewrite it here.
+    check_consolidated_forecast_period(tableau_workbook_path, period)
 
     routes = routes_for(categories)
     worksheet_names = [route["tableau_worksheet"] for route in routes]
@@ -341,6 +452,18 @@ def populate_monthly_forecast_from_tableau(
         tableau_workbook_path=tableau_workbook_path,
         worksheet_names=worksheet_names,
     )
+
+    # A tab that failed to copy is tried once more, after the others.
+    retried_tabs = set()
+    if extract_errors:
+        print(f"Trying {len(extract_errors)} Tableau tab(s) again: {', '.join(extract_errors)}")
+        again, still_failing = extract_forecast_worksheets(
+            tableau_workbook_path=tableau_workbook_path,
+            worksheet_names=list(extract_errors),
+        )
+        extracts.update(again)
+        retried_tabs.update(again)
+        extract_errors = {name: still_failing.get(name, error) for name, error in extract_errors.items() if name not in again}
 
     # One extract file per category, so running Revenue never overwrites the
     # OPEX extract.
@@ -359,40 +482,40 @@ def populate_monthly_forecast_from_tableau(
             period["target_month_abbr"],
         )
         target = folder / target_name
+        tab = route["tableau_worksheet"]
+        base = {"workbook": target_name, "worksheet": route["excel_sheet"], "tableau_worksheet": tab}
+
+        # Do not touch the Excel sheet if its Tableau source failed.
+        if tab in extract_errors:
+            failed.append({**base, "error": f'Tableau tab "{tab}" could not be copied: '
+                           + _reason(extract_errors[tab])})
+            continue
 
         try:
-            # Do not touch the Excel sheet if its Tableau source failed.
-            if route["tableau_worksheet"] in extract_errors:
-                raise RuntimeError(
-                    "Tableau extraction failed: "
-                    + extract_errors[route["tableau_worksheet"]]
-                )
-            result = populate_forecast_sheet_from_audit(
-                workbook_path=target,
-                excel_sheet_name=route["excel_sheet"],
-                audit_workbook_path=audit_path,
-                tableau_worksheet_name=route["tableau_worksheet"],
+            result, retried = _paste_route_safely(
+                target=target,
+                excel_sheet=route["excel_sheet"],
+                audit_path=audit_path,
+                tableau_worksheet=tab,
                 fiscal_year=fiscal_year,
             )
-            passed.append(
-                {
-                    "workbook": target_name,
-                    "worksheet": route["excel_sheet"],
-                    "tableau_worksheet": route["tableau_worksheet"],
-                    "rows": result.get("tableau_detail_rows", 0),
-                    "months_pasted": result.get("months_pasted", []),
-                    "months_blank_in_tableau": result.get("months_blank_in_tableau", []),
-                }
-            )
         except Exception as exc:
-            failed.append(
-                {
-                    "workbook": target_name,
-                    "worksheet": route["excel_sheet"],
-                    "tableau_worksheet": route["tableau_worksheet"],
-                    "error": explain(exc),
-                }
-            )
+            failed.append({**base, "error": explain(exc) if isinstance(exc, PlainLanguageError) else _reason(exc)})
+            continue
+
+        passed.append(
+            {
+                **base,
+                "rows": result.get("tableau_detail_rows", 0),
+                "months_pasted": result.get("months_pasted", []),
+                "months_blank_in_tableau": result.get("months_blank_in_tableau", []),
+                "comments_dropped": result.get("comments_dropped", []),
+                "unmerged": result.get("unmerged", []),
+                "date_formats_fixed": result.get("date_formats_fixed", 0),
+                # Something went wrong once; it worked on the second try. Worth a look.
+                "check_manually": retried or tab in retried_tabs,
+            }
+        )
 
     pasted = []
     for item in passed:
@@ -411,6 +534,7 @@ def populate_monthly_forecast_from_tableau(
         "routes_passed": len(passed),
         "routes_failed": len(failed),
         "workbooks_updated": len({item["workbook"] for item in passed}),
+        "check_manually": [item for item in passed if item["check_manually"]],
         "worksheets_updated": len(passed),
     }
 

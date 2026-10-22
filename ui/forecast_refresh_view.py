@@ -808,7 +808,8 @@ class ForecastRefreshView(tb.Frame):
             "Update Workbooks from Tableau",
             (
                 f"Update the {category} workbooks ({len(routes_for([category]))} sheets)?\n\n"
-                "Confirm the consolidated Tableau workbook is open and ready.\n\n"
+                "This uses the Tableau workbook Step 1 opened (it is opened "
+                "again if it was closed). Nothing in it is changed.\n\n"
                 f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
                 f"Forecast Type: {period['forecast_type']}\n\n"
                 "Continue with crosstab extraction and Excel population?"
@@ -876,6 +877,37 @@ class ForecastRefreshView(tb.Frame):
             + "\n"
         )
 
+    @staticmethod
+    def _population_notes(result: dict) -> str:
+        """What the user should look at after Step 2, in plain words."""
+        notes = []
+        retried = result.get("check_manually") or []
+        if retried:
+            notes.append(
+                "Please check these by hand. Something interrupted them the first "
+                "time; they worked on the second try:"
+            )
+            notes += [f"  - {item['workbook']} / {item['worksheet']}" for item in retried[:10]]
+        dropped = [
+            (item, entry) for item in result.get("passed", []) for entry in item.get("comments_dropped") or []
+        ]
+        if dropped:
+            notes.append("Comments on lines that are no longer in Tableau (removed with the line):")
+            notes += [
+                f"  - {item['workbook']} / {item['worksheet']}: {entry['account']} - \"{entry['text'][:80]}\""
+                for item, entry in dropped[:10]
+            ]
+        unmerged = [item for item in result.get("passed", []) if item.get("unmerged")]
+        if unmerged:
+            notes.append("Merged cells were unmerged so lines could be added or removed "
+                         "(their text stays on the first line):")
+            notes += [f"  - {item['workbook']} / {item['worksheet']}: {', '.join(item['unmerged'])}"
+                      for item in unmerged[:10]]
+        fixed = sum(item.get("date_formats_fixed", 0) for item in result.get("passed", []))
+        if fixed:
+            notes.append(f"{fixed} amount(s) were formatted as dates and now use the sheet's number format.")
+        return ("\n" + "\n".join(notes) + "\n") if notes else ""
+
     def _population_failed(self, category: str, error: Exception) -> None:
         self.category_status_vars[category].set("Stopped - see message")
         self._process_failed(error)
@@ -922,13 +954,14 @@ class ForecastRefreshView(tb.Frame):
             ]
             if len(failed) > 10:
                 lines.append(f"...and {len(failed) - 10} more (see the log).")
+            lines.append(self._population_notes(result))
             messagebox.showwarning(
                 f"Update from Tableau - {category}",
                 "\n".join(lines),
                 parent=self.winfo_toplevel(),
             )
         else:
-            messagebox.showinfo(
+            (messagebox.showwarning if self._population_notes(result) else messagebox.showinfo)(
                 f"Update from Tableau - {category}",
                 (
                     f"{category}: {result['workbooks_updated']} workbooks updated.\n"
@@ -936,10 +969,10 @@ class ForecastRefreshView(tb.Frame):
                     f"Months pasted from Tableau: {result.get('months_pasted') or 'none'}\n"
                     "Formulas in the workbooks were kept.\n"
                     + self._blank_month_note(result)
+                    + self._population_notes(result)
                     + "\n"
-                    "Click '3.  Validate Final Forecast' to compare "
-                    "the completed Excel totals to the individual "
-                    "Tableau workbooks."
+                    f"Next: click Validate under {category} (step 3) to compare "
+                    "the Excel totals to the individual Tableau workbooks."
                 ),
                 parent=self.winfo_toplevel(),
             )
