@@ -220,3 +220,47 @@ def test_step_3_uses_the_chosen_tableau_forecast_type(tmp_path, monkeypatch):
     summary = {row[0]: row[1] for row in load_workbook(result["validation_report"])["Validation Summary"]
                .iter_rows(values_only=True)}
     assert summary["Forecast Type"] == "FY27 Forecast_092026" and summary["Tolerance"] == 1000
+
+
+def test_report_goes_to_the_teams_validation_results_folder(tmp_path, monkeypatch):
+    from shared import settings
+
+    root = tmp_path / "Financial Planning & Analysis-Validation Results - Documents"
+    root.mkdir()
+    real = settings.get_path
+    monkeypatch.setattr(settings, "get_path",
+                        lambda key: root if key == "shared_output_root" else (None if key.endswith("_root") else real(key)))
+    monkeypatch.setattr(service, "run_grouped_individual_validation",
+                        lambda **k: {"results": [], "workbooks": [], "passed": 0, "failed": 0,
+                                     "action_required": 0, "status": "PASS"})
+    result = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["OPEX"])
+    assert result["validation_report"] == str(
+        root / "FY27" / "2026-10 - October" / "Forecast Validation" / "Forecast_Validation_Oct_2026.xlsx")
+
+
+def test_step3_message_says_what_to_review_and_where_the_report_is():
+    from ui.forecast_messages import step3_message
+
+    report = r"C:\...\Forecast Validation\Forecast_Validation_Oct_2026.xlsx"
+    attention, text = step3_message("OPEX", {"validation_report": report, "results": [
+        {"category": "OPEX", "status": "PASS", "forecast_workbook": "FY27 OPEX Legal_Oct Forecast.xlsx", "worksheet": "ALIV"},
+        {"category": "OPEX", "status": "FAIL", "forecast_workbook": "FY27 OPEX HR_Oct Forecast.xlsx", "worksheet": "CBL",
+         "excel_grand_total": 125000, "tableau_grand_total": 120500, "variance": 4500},
+        {"category": "OPEX", "status": "ACTION REQUIRED", "forecast_workbook": "FY27 OPEX IT_Oct Forecast.xlsx",
+         "worksheet": "ALIV", "note": "Tableau did not open in time."},
+        {"category": "OPEX", "status": "NOT VALIDATED", "forecast_workbook": "FY27 OPEX Eng_Oct Forecast.xlsx",
+         "worksheet": "Tech Ops - ALIV"},
+    ]})
+    assert attention
+    assert text.startswith("OPEX: 1 of 3 checked sheets match Tableau (within $1,000).")
+    assert "1. FY27 OPEX HR / CBL\n    Excel 125,000 vs Tableau 120,500 - off by 4,500" in text
+    assert "2. FY27 OPEX IT / ALIV\n    Not checked: Tableau did not open in time." in text
+    assert "1 sheet(s) are not checked automatically yet" in text
+    assert f"Validation report: {report}" in text
+
+
+def test_step3_message_all_matched_is_information():
+    from ui.forecast_messages import step3_message
+
+    attention, text = step3_message("Revenue", {"results": [{"category": "Revenue", "status": "PASS"}] * 6})
+    assert not attention and text.startswith("Revenue: all 6 checked sheets match Tableau")

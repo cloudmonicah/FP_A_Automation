@@ -65,3 +65,52 @@ def step2_message(category: str, result: dict) -> tuple[bool, str]:
     if not failed:
         lines += ["", f"Next: click Validate under {category} (step 3)."]
     return bool(attention), "\n".join(lines)
+
+
+def step3_message(category: str, result: dict) -> tuple[bool, str]:
+    """(needs attention, text) for the Step 3 pop-up, in plain words."""
+    month_suffix = re.compile(r"_[A-Za-z]{3} Forecast\.xlsx$")
+
+    def name(item):
+        return month_suffix.sub("", str(item.get("forecast_workbook") or "")) + " / " + str(item.get("worksheet") or "")
+
+    def money(value):
+        return "-" if value is None else f"{value:,.0f}"
+
+    rows = [item for item in result.get("results", []) if item.get("category", category) == category]
+    status = lambda wanted: [item for item in rows if item.get("status") == wanted]
+    passed, failed, action, skipped = (status("PASS"), status("FAIL"),
+                                       status("ACTION REQUIRED"), status("NOT VALIDATED"))
+
+    if failed or action:
+        lines = [f"{category}: {len(passed)} of {len(passed) + len(failed) + len(action)} "
+                 "checked sheets match Tableau (within $1,000)."]
+    elif passed:
+        lines = [f"{category}: all {len(passed)} checked sheets match Tableau (within $1,000)."]
+    else:
+        lines = [f"{category}: no sheets could be checked automatically."]
+
+    attention = []
+    number = 0
+    for item in failed[:10]:
+        number += 1
+        attention += [f"{number}. {name(item)}",
+                      f"    Excel {money(item.get('excel_grand_total'))} vs Tableau "
+                      f"{money(item.get('tableau_grand_total'))} - off by {money(abs(item.get('variance') or 0))}"]
+    for item in action[:10]:
+        number += 1
+        attention += [f"{number}. {name(item)}", f"    Not checked: {item.get('note') or 'see the report'}"]
+    if len(failed) + len(action) > 20:
+        attention.append("...and more (see the report).")
+    if attention:
+        lines += ["", "Needs your attention", *attention]
+
+    if skipped:
+        lines += ["", "For your information",
+                  f"{len(skipped)} sheet(s) are not checked automatically yet - their Tableau tab "
+                  "needs a department filter. They are listed in the report."]
+
+    if result.get("validation_report"):
+        lines += ["", f"Validation report: {result['validation_report']}",
+                  "Use Open Validation Report on this page to open it."]
+    return bool(attention), "\n".join(lines)

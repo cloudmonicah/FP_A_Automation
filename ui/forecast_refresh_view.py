@@ -41,7 +41,7 @@ MONTH_LOOKUP = {
 
 
 from ui.common import confirm_close_tableau, get_attention
-from ui.forecast_messages import step2_message
+from ui.forecast_messages import step2_message, step3_message
 
 log = logging.getLogger(__name__)
 
@@ -1066,39 +1066,12 @@ class ForecastRefreshView(tb.Frame):
         self._set_populate_state("normal")
         self._set_validate_state("normal")
 
-        message = (
-            f"{category} validation complete.\n\n"
-            f"Passed: {passed}\n"
-            f"Failed: {failed}\n"
-            f"Action Required: {action}"
+        attention, message = step3_message(category, result)
+        (messagebox.showwarning if attention else messagebox.showinfo)(
+            f"Validate - {category}",
+            message,
+            parent=self.winfo_toplevel(),
         )
-        problems = [
-            item for item in result.get("results", [])
-            if item.get("status") in ("FAIL", "ACTION REQUIRED")
-        ]
-        if problems:
-            message += "\n\nTo review:\n" + "\n".join(
-                f"- {item.get('forecast_workbook')} / {item.get('worksheet')}: "
-                f"{item.get('note') or 'variance ' + format(item.get('variance') or 0, ',.2f')}"
-                for item in problems[:8]
-            )
-        message += (
-            "\n\nThe month's validation report was updated "
-            "(other categories' results were kept)."
-        )
-
-        if failed or action:
-            messagebox.showwarning(
-                "Forecast Validation Complete",
-                message,
-                parent=self.winfo_toplevel(),
-            )
-        else:
-            messagebox.showinfo(
-                "Forecast Validation Complete",
-                message,
-                parent=self.winfo_toplevel(),
-            )
 
     # =========================================================
     # COMMON
