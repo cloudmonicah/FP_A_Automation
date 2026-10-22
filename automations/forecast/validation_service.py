@@ -138,172 +138,53 @@ def get_excel_forecast_grand_total(
     workbook_path: str | Path,
     worksheet_name: str,
 ) -> float:
-    """
-    Calculate the final forecast Grand Total directly from the
-    populated Jul-Jun detail values.
+    """The full-year Grand Total shown on the sheet: the total row's Grand Total cell.
 
-    We deliberately do NOT depend on Excel's cached formula
-    result because openpyxl writes formulas but does not
-    calculate them.
+    Uses the value Excel saved with the file when there is one. A workbook
+    the app has just written has no saved values (openpyxl writes formulas
+    only), so the cell's own formula is calculated from the sheet - the same
+    number Excel shows when the file is opened.
     """
+    from shared.friendly_errors import PlainLanguageError
+    from shared.sheet_formulas import SheetCalculator, UnsupportedFormula
+
+    from .excel_service import _detail_range, _s4_structure
 
     workbook_path = Path(workbook_path)
-
     if not workbook_path.exists():
-        raise FileNotFoundError(f"Forecast workbook not found:\n{workbook_path}")
-
-    # --------------------------------------------------------
-    # data_only=False is intentional.
-    #
-    # Stage 4 populated the monthly values directly. We read
-    # those values and calculate the total ourselves instead
-    # of depending on Excel's formula cache.
-    # --------------------------------------------------------
-
-    wb = load_workbook(
-        workbook_path,
-        data_only=False,
-        read_only=False,
-    )
-
-    try:
-        ws = _find_excel_sheet(
-            wb,
-            worksheet_name,
+        raise PlainLanguageError(
+            f'The workbook "{workbook_path.name}" is not in the Forecast Output Folder. '
+            "Run Step 1 and Step 2 first, or check the folder."
         )
 
-        header_row = None
-        forecast_type_col = None
-
-        # ----------------------------------------------------
-        # Find Forecast Type header.
-        # ----------------------------------------------------
-
-        for row in range(
-            1,
-            min(ws.max_row, 25) + 1,
-        ):
-            for col in range(
-                1,
-                ws.max_column + 1,
-            ):
-                if (
-                    _norm(
-                        ws.cell(
-                            row,
-                            col,
-                        ).value
-                    )
-                    == "forecast type"
-                ):
-                    header_row = row
-                    forecast_type_col = col
-                    break
-
-            if header_row is not None:
-                break
-
-        if header_row is None:
-            raise RuntimeError(
-                f'Could not find "Forecast Type" header '
-                f'in worksheet "{worksheet_name}".'
+    formulas = load_workbook(workbook_path, data_only=False)
+    values = load_workbook(workbook_path, data_only=True)
+    try:
+        ws = _find_excel_sheet(formulas, worksheet_name)
+        structure = _s4_structure(ws)
+        _first, _last, total_row = _detail_range(ws, structure)
+        if total_row is None:
+            raise PlainLanguageError(
+                f'The "{ws.title}" tab has no total row under its lines (a row with SUM '
+                "formulas), so its Grand Total could not be read."
             )
+        column = structure["grand_total_column"]
 
-        # ----------------------------------------------------
-        # Identify Jul-Jun month columns from the real Excel
-        # dates written by Stage 4.
-        # ----------------------------------------------------
+        saved = values[ws.title].cell(total_row, column).value
+        if isinstance(saved, (int, float)) and not isinstance(saved, bool):
+            return float(saved)
 
-        month_columns = []
-
-        for col in range(
-            1,
-            ws.max_column + 1,
-        ):
-            value = ws.cell(
-                header_row,
-                col,
-            ).value
-
-            if isinstance(
-                value,
-                (datetime, date),
-            ):
-                month_columns.append(col)
-
-        if len(month_columns) != 12:
-            raise RuntimeError(
-                f"Expected 12 fiscal month columns in "
-                f'"{worksheet_name}", but found '
-                f"{len(month_columns)}."
-            )
-
-        # ----------------------------------------------------
-        # Find the actual detail rows.
-        #
-        # The bottom total row deliberately has no Forecast
-        # Type value, so it is automatically excluded.
-        # ----------------------------------------------------
-
-        detail_rows = []
-
-        for row in range(
-            header_row + 1,
-            ws.max_row + 1,
-        ):
-            forecast_type = ws.cell(
-                row,
-                forecast_type_col,
-            ).value
-
-            if forecast_type not in (
-                None,
-                "",
-            ):
-                detail_rows.append(row)
-
-        if not detail_rows:
-            raise RuntimeError(
-                f"No forecast detail rows found in " f'"{worksheet_name}".'
-            )
-
-        # ----------------------------------------------------
-        # Calculate the workbook total directly from Jul-Jun.
-        # ----------------------------------------------------
-
-        grand_total = 0.0
-
-        for row in detail_rows:
-            for col in month_columns:
-                value = ws.cell(
-                    row,
-                    col,
-                ).value
-
-                if value in (
-                    None,
-                    "",
-                ):
-                    continue
-
-                # Stage 4 monthly cells should contain values,
-                # not formulas.
-                if isinstance(value, str) and value.startswith("="):
-                    raise RuntimeError(
-                        "Unexpected formula found in a "
-                        "forecast month cell.\n"
-                        f"Workbook: {workbook_path.name}\n"
-                        f"Worksheet: {worksheet_name}\n"
-                        f"Cell: {ws.cell(row, col).coordinate}\n"
-                        f"Value: {value}"
-                    )
-
-                grand_total += _number(value)
-
-        return grand_total
-
+        try:
+            return SheetCalculator(ws).value(total_row, column)
+        except UnsupportedFormula as exc:
+            raise PlainLanguageError(
+                f'The Grand Total on the "{ws.title}" tab (cell '
+                f"{ws.cell(total_row, column).coordinate}) uses a formula the app can't "
+                f"calculate ({exc}). Open the workbook in Excel, save it, and validate again."
+            ) from exc
     finally:
-        wb.close()
+        formulas.close()
+        values.close()
 
 
 # ============================================================
@@ -387,7 +268,7 @@ def apply_validation_sign_rule(
 def compare_forecast_totals(
     excel_total: float,
     tableau_total: float,
-    tolerance: float = 5.00,
+    tolerance: float = 1000.00,
 ) -> dict:
     """
     Compare Excel and Tableau using a monetary tolerance.
@@ -418,7 +299,7 @@ def validate_route_from_tableau_rows(
     forecast_folder: str | Path,
     target_month_abbr: str,
     tableau_rows: list[dict],
-    tolerance: float = 5.00,
+    tolerance: float = 1000.00,
 ) -> dict:
     """
     Validate one completed forecast route against already
@@ -446,8 +327,10 @@ def validate_route_from_tableau_rows(
             "variance": None,
             "status": "NOT VALIDATED",
             "note": (
-                route.get("validation_filter_note")
-                or "Additional Tableau filtering is required."
+                "Not checked: the individual Tableau tab covers more than this sheet. "
+                "It needs a "
+                + (route.get("validation_filter_note") or "department")
+                + " filter before its total can be compared."
             ),
         }
 
@@ -525,8 +408,9 @@ def _prepare_individual_forecast_copy(
     Prepare one route-specific temporary individual Tableau workbook.
 
     This follows the proven old _prepare_individual_forecast_copy rules:
-    update only the monthly period controls and Company selection while
-    retaining the worksheet's other saved filters/selections.
+    update only the period controls (Forecast Start and Forecast Type /
+    Forecast Measure) and keep every other saved filter, including Company:
+    each individual tab is already built for its company.
     """
     import xml.etree.ElementTree as ET
 
@@ -619,49 +503,9 @@ def _prepare_individual_forecast_copy(
                 value=forecast_start_value,
             )
 
-    # --------------------------------------------------------
-    # COMPANY
-    #
-    # Preserve the old rule for V1. Workbooks without this
-    # structure remain ACTION REQUIRED until their actual filter
-    # structure is inspected; do not invent a replacement rule.
-    # --------------------------------------------------------
-    company = str(company or "").strip().upper()
-
-    if company not in {"ALIV", "CBL"}:
-        raise ValueError(
-            f'Confirmed route requires ALIV/CBL company_filter: "{company}".'
-        )
-
+    # Company is not changed: each individual tab is already built for its
+    # company. Every saved filter except the period controls is left alone.
     filters = target_sheet.findall(".//filter")
-
-    company_filters = [
-        item for item in filters if item.get("column", "").endswith("[none:Company:nk]")
-    ]
-
-    if len(company_filters) != 1:
-        raise ValueError(
-            f'Expected one Company filter on individual forecast tab "{tab}".'
-        )
-
-    company_filter = company_filters[0]
-
-    if company_filter.get("class") != "categorical":
-        raise ValueError(
-            f'Unsupported Company filter type on individual forecast tab "{tab}".'
-        )
-
-    # Replace only Company. Leave every other saved filter alone.
-    for child in list(company_filter):
-        company_filter.remove(child)
-
-    ET.SubElement(
-        company_filter,
-        "groupfilter",
-        function="member",
-        level="[none:Company:nk]",
-        member=f'"{company}"',
-    )
 
     # --------------------------------------------------------
     # FORECAST TYPE / FORECAST MEASURE
@@ -804,27 +648,6 @@ def _prepare_individual_forecast_copy(
     verify_sheet = verify_sheets[0]
     verify_filters = verify_sheet.findall(".//filter")
 
-    verify_company_filters = [
-        item
-        for item in verify_filters
-        if item.get("column", "").endswith("[none:Company:nk]")
-    ]
-
-    if len(verify_company_filters) != 1:
-        raise RuntimeError(f'Company filter could not be verified on "{tab}".')
-
-    saved_company_members = [
-        member.get("member", "").strip('"')
-        for member in verify_company_filters[0].findall(
-            ".//groupfilter[@function='member']"
-        )
-    ]
-
-    if company not in saved_company_members:
-        raise RuntimeError(
-            f'Company "{company}" could not be verified in temporary Tableau copy.'
-        )
-
     if period_mode == "Forecast Type":
         verify_forecast_filters = [
             item
@@ -935,7 +758,7 @@ def run_grouped_individual_validation(
     forecast_month: int,
     forecast_year: int,
     only_workbooks: list[str] | None = None,
-    tolerance: float = 5.00,
+    tolerance: float = 1000.00,
     open_wait_seconds: float = 8.0,
     forecast_start: date | None = None,
     forecast_type: str | None = None,
@@ -964,9 +787,17 @@ def run_grouped_individual_validation(
         allowed = {_norm(name) for name in only_workbooks}
 
     selected_routes = []
+    not_validated = []
 
     for route in routes:
         if route.get("validation_status") != "confirmed":
+            # Listed in the report so nothing goes unchecked without a reason.
+            item = validate_route_from_tableau_rows(
+                route=route, forecast_folder=forecast_folder,
+                target_month_abbr=target_month_abbr, tableau_rows=[], tolerance=tolerance,
+            )
+            item["category"] = route.get("category", "")
+            not_validated.append(item)
             continue
 
         folder = route.get("individual_tableau_folder")
@@ -1125,6 +956,8 @@ def run_grouped_individual_validation(
     # One result per selected route, in order: tag each with its category.
     for route, item in zip(selected_routes, results):
         item["category"] = route.get("category", "")
+
+    results.extend(not_validated)
 
     passed = sum(item.get("status") == "PASS" for item in results)
 

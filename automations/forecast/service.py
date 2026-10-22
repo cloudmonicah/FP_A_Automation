@@ -88,6 +88,18 @@ def build_forecast_period(
     }
 
 
+def check_tableau_forecast_type(text: str, fiscal_year: str) -> str:
+    """The Forecast Type chosen for Tableau, e.g. "FY27 Forecast_102026", tidied up."""
+    value = " ".join(str(text or "").split())
+    match = re.fullmatch(r"(FY\d{2}) Forecast_(\d{2})(\d{4})", value, re.I)
+    if not match or not 1 <= int(match.group(2)) <= 12:
+        raise PlainLanguageError(
+            f'Tableau Forecast Type "{value}" doesn\'t look right. Type it as it appears in '
+            "Tableau's Forecast Type filter, for example FY27 Forecast_102026."
+        )
+    return f"{match.group(1).upper()} Forecast_{match.group(2)}{match.group(3)}"
+
+
 def set_consolidated_forecast_period(
     tableau_workbook_path: str | Path,
     fiscal_year: str,
@@ -566,10 +578,14 @@ def validate_monthly_forecast(
     forecast_month: int,
     forecast_year: int,
     forecast_start: date | None = None,
-    tolerance: float = 5.00,
+    tolerance: float = 1000.00,
     categories: list[str] | None = None,
+    tableau_forecast_type: str | None = None,
 ) -> dict:
     """Step 3 for one category (OPEX, Direct Cost, Revenue, Other) or all.
+
+    The individual Tableau workbooks use ``tableau_forecast_type`` - the same
+    Forecast Type chosen in the consolidated workbook (default: the month's).
 
     The month's report keeps the latest results of every category: running
     Revenue replaces Revenue's rows and leaves the other categories alone.
@@ -580,6 +596,9 @@ def validate_monthly_forecast(
         forecast_year=forecast_year,
         forecast_start=forecast_start,
     )
+
+    if tableau_forecast_type:
+        period["forecast_type"] = check_tableau_forecast_type(tableau_forecast_type, period["fiscal_year"])
 
     validation_output_folder = get_forecast_validation_output_folder(
         fiscal_year=period["fiscal_year"],

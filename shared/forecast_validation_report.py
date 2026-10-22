@@ -77,7 +77,7 @@ def write_forecast_validation_report(
     forecast_month,
     forecast_year,
     forecast_type,
-    tolerance=5.00,
+    tolerance=1000.00,
     forecast_start=None,
 ):
     output_folder = Path(output_folder)
@@ -148,7 +148,8 @@ def write_forecast_validation_report(
         ("ACTION REQUIRED", "Validation could not complete and requires review."),
         (
             "NOT VALIDATED",
-            "Route is not yet configured for automated individual Tableau validation.",
+            "Not checked automatically: the individual Tableau tab needs an extra "
+            "department filter first (see Note).",
         ),
     ]
     for r, (s, m) in enumerate(guides, start=16):

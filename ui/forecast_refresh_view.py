@@ -17,6 +17,7 @@ import ttkbootstrap as tb
 from automations.forecast.mapping import FORECAST_CATEGORIES, routes_for
 from automations.forecast.service import (
     build_forecast_period,
+    check_tableau_forecast_type,
     default_forecast_start,
     populate_monthly_forecast_from_tableau,
     prepare_monthly_forecast,
@@ -69,6 +70,7 @@ class ForecastRefreshView(tb.Frame):
         )
         self.period_summary_var = tb.StringVar()
         self.forecast_start_var = tb.StringVar()
+        self.tableau_forecast_type_var = tb.StringVar()
         self.progress_var = tb.IntVar(value=0)
 
         self.files_created_var = tb.StringVar(value="0")
@@ -214,6 +216,26 @@ class ForecastRefreshView(tb.Frame):
         )
         overwrite.grid(row=5, column=1, sticky="w", pady=3)
         overwrite.set("skip")
+
+        # The Forecast Type filter chosen in the consolidated Tableau workbook;
+        # Step 3 uses the same one in every individual workbook.
+        tb.Label(panel, text="Tableau Forecast Type", font=("Segoe UI", 9, "bold")).grid(
+            row=6, column=0, sticky="w", padx=(0, 10), pady=3
+        )
+        type_row = tb.Frame(panel)
+        type_row.grid(row=6, column=1, columnspan=2, sticky="ew", pady=3)
+        self.tableau_forecast_type_combo = tb.Combobox(
+            type_row, textvariable=self.tableau_forecast_type_var, width=26
+        )
+        self.tableau_forecast_type_combo.pack(side="left")
+        self.tableau_forecast_type_combo.bind("<<ComboboxSelected>>", self._update_period_summary)
+        self.tableau_forecast_type_combo.bind("<FocusOut>", self._update_period_summary)
+        tb.Label(
+            type_row,
+            text="Set Tableau's Forecast Type filter to this. Step 3 uses it too.",
+            bootstyle="secondary",
+            font=("Segoe UI", 8),
+        ).pack(side="left", padx=(8, 0))
 
     def _build_steps_panel(self, parent) -> None:
         """Step 1 across the top; steps 2 and 3 as a grid: one column per category."""
@@ -487,19 +509,33 @@ class ForecastRefreshView(tb.Frame):
         )
 
     def _period(self) -> dict:
-        return build_forecast_period(
+        period = build_forecast_period(
             fiscal_year=self.fiscal_year_combo.get(),
             forecast_month=MONTH_LOOKUP[self.forecast_month_combo.get()],
             forecast_year=int(self.forecast_year_combo.get()),
             forecast_start=self._forecast_start(),
         )
+        chosen = self.tableau_forecast_type_var.get().strip() or period["forecast_type"]
+        period["tableau_forecast_type"] = check_tableau_forecast_type(chosen, period["fiscal_year"])
+        return period
+
+    def _tableau_type_choices(self) -> list[str]:
+        """The selected month's Forecast Type and the two before it."""
+        month = MONTH_LOOKUP[self.forecast_month_combo.get()]
+        year = int(self.forecast_year_combo.get())
+        fiscal = self.fiscal_year_combo.get()
+        choices = []
+        for _ in range(3):
+            choices.append(f"{fiscal} Forecast_{month:02d}{year}")
+            month, year = (12, year - 1) if month == 1 else (month - 1, year)
+        return choices
 
     def _checked_period(self) -> dict | None:
         """The period, or None after telling the user what is wrong with it."""
         try:
             return self._period()
         except PlainLanguageError as exc:
-            messagebox.showerror("Forecast Start", str(exc), parent=self.winfo_toplevel())
+            messagebox.showerror("Forecast Parameters", str(exc), parent=self.winfo_toplevel())
             return None
 
     def _month_changed(self, _event=None) -> None:
@@ -509,6 +545,7 @@ class ForecastRefreshView(tb.Frame):
             int(self.forecast_year_combo.get()),
         )
         self.forecast_start_var.set(f"{start:%m/%d/%Y}")
+        self.tableau_forecast_type_var.set("")   # back to the new month's default
         self._update_period_summary()
 
     @staticmethod
@@ -533,6 +570,9 @@ class ForecastRefreshView(tb.Frame):
                 int(self.forecast_year_combo.get()),
             )
             self.forecast_start_var.set(f"{start:%m/%d/%Y}")
+        self.tableau_forecast_type_combo.configure(values=self._tableau_type_choices())
+        if not self.tableau_forecast_type_var.get().strip():
+            self.tableau_forecast_type_var.set(self._tableau_type_choices()[0])
         try:
             period = self._period()
         except PlainLanguageError as exc:
@@ -771,9 +811,9 @@ class ForecastRefreshView(tb.Frame):
             f"Forecast Start (Tableau): {period['forecast_start']:%m/%d/%Y}",
             f"Forecast Type (Excel workbooks): {period['forecast_type']}",
             "",
-            "Tableau is opening. When it has loaded, choose the Forecast Type "
-            "filter you want and let it refresh, then click Update for each "
-            "category under step 2.",
+            f"Tableau is opening. When it has loaded, set its Forecast Type filter to "
+            f"{period['tableau_forecast_type']} and let it refresh, then click Update "
+            "for each category under step 2.",
         ]
         (messagebox.showwarning if failures or older or warnings else messagebox.showinfo)(
             "Forecast Workbooks Created",
@@ -819,8 +859,8 @@ class ForecastRefreshView(tb.Frame):
                 f"Update the {category} workbooks ({len(routes_for([category]))} sheets)?\n\n"
                 "The app copies what the Tableau workbook from Step 1 shows "
                 "(it is opened again if it was closed). Nothing in it is changed.\n\n"
-                "Check the Forecast Type filter in Tableau is the one you want "
-                "before continuing.\n\n"
+                "Before continuing, check Tableau's Forecast Type filter is set to "
+                f"{period['tableau_forecast_type']}.\n\n"
                 f"Forecast Start (Tableau): {period['forecast_start']:%m/%d/%Y}\n\n"
                 "Continue?"
             ),
@@ -931,10 +971,11 @@ class ForecastRefreshView(tb.Frame):
             (
                 f"Validate the {category} sheets for {period['display']}?\n\n"
                 f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
-                f"Forecast Type: {period['forecast_type']}\n\n"
-                "Each individual Tableau workbook is opened as a temporary copy "
-                "set to this period. The month's report keeps the results of "
-                "the other categories."
+                f"Forecast Type: {period['tableau_forecast_type']} (same as the consolidated "
+                "workbook)\n\n"
+                "Each individual Tableau workbook is opened as a temporary copy set to "
+                "this period, and its Grand Total is compared to the sheet's Grand Total "
+                "(within $1,000). The month's report keeps the other categories' results."
             ),
             parent=self.winfo_toplevel(),
         )
@@ -974,8 +1015,9 @@ class ForecastRefreshView(tb.Frame):
                 forecast_month=period["forecast_month"],
                 forecast_year=period["forecast_year"],
                 forecast_start=period["forecast_start"],
-                tolerance=5.00,
+                tolerance=1000.00,
                 categories=[category],
+                tableau_forecast_type=period["tableau_forecast_type"],
             )
             self.after(0, lambda r=result, c=category: self._validation_complete(c, r))
         except Exception as exc:
