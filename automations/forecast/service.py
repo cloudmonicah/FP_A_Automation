@@ -466,7 +466,7 @@ def _paste_route_safely(target: Path, excel_sheet: str, audit_path: Path,
     raise last_error
 
 
-def populate_monthly_forecast_from_tableau(
+def _populate_monthly_forecast_from_tableau(
     forecast_folder: str | Path,
     tableau_workbook_path: str | Path,
     fiscal_year: str,
@@ -502,10 +502,24 @@ def populate_monthly_forecast_from_tableau(
 
     _make_sure_tableau_is_open(tableau_workbook_path)
 
+    # Everything Step 2 produces besides the workbooks goes to the month's
+    # Forecast Validation folder, never the Forecast Output Folder (that one
+    # is published to the departments and holds only their workbooks).
+    tag = "All" if not categories else "_".join(c.replace(" ", "") for c in categories)
+    validation_folder = get_forecast_validation_output_folder(
+        fiscal_year=period["fiscal_year"],
+        forecast_month=period["forecast_month"],
+        forecast_year=period["forecast_year"],
+        create=True,
+    )
+    raw_folder = validation_folder / "Tableau Raw Copies"
+    extract_folder = validation_folder / "Tableau Extracts"
+
     extracts, extract_errors = (
         extract_forecast_worksheets(
             tableau_workbook_path=tableau_workbook_path,
             worksheet_names=worksheet_names,
+            raw_output_folder=raw_folder,
         )
         if worksheet_names
         else ({}, {})
@@ -518,6 +532,7 @@ def populate_monthly_forecast_from_tableau(
         again, still_failing = extract_forecast_worksheets(
             tableau_workbook_path=tableau_workbook_path,
             worksheet_names=list(extract_errors),
+            raw_output_folder=raw_folder,
         )
         extracts.update(again)
         retried_tabs.update(again)
@@ -525,8 +540,7 @@ def populate_monthly_forecast_from_tableau(
 
     # One extract file per category, so running Revenue never overwrites the
     # OPEX extract.
-    tag = "All" if not categories else "_".join(c.replace(" ", "") for c in categories)
-    audit_path = folder / (
+    audit_path = extract_folder / (
         f"Tableau_Forecast_Extract_{forecast_year}-{forecast_month:02d}_{tag}.xlsx"
     )
     write_tableau_audit_workbook(extracts, audit_path)
@@ -590,6 +604,7 @@ def populate_monthly_forecast_from_tableau(
         "categories": list(categories or FORECAST_CATEGORIES),
         "months_pasted": ", ".join(pasted),
         "audit_workbook": str(audit_path),
+        "validation_folder": str(validation_folder),
         "passed": passed,
         "failed": failed,
         "routes_processed": len(passed) + len(failed),
@@ -665,3 +680,68 @@ def validate_monthly_forecast(
     result["validation_output_folder"] = str(validation_output_folder)
     result["validation_report"] = str(report_path)
     return result
+
+
+def populate_monthly_forecast_from_tableau(
+    forecast_folder: str | Path,
+    tableau_workbook_path: str | Path,
+    fiscal_year: str,
+    forecast_month: int,
+    forecast_year: int,
+    forecast_start: date | None = None,
+    categories: list[str] | None = None,
+) -> dict:
+    """Step 2, with a run log saved in the month's Forecast Validation\\Logs folder."""
+    import logging
+    from datetime import datetime
+
+    tag = "All" if not categories else ", ".join(categories)
+    handler = None
+    try:
+        log_folder = get_forecast_validation_output_folder(
+            fiscal_year=fiscal_year,
+            forecast_month=forecast_month,
+            forecast_year=forecast_year,
+            create=True,
+        ) / "Logs"
+        log_folder.mkdir(parents=True, exist_ok=True)
+        log_path = log_folder / f"Step 2 - {tag} - {datetime.now():%Y-%m-%d %H%M%S}.log"
+        handler = logging.FileHandler(log_path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+        handler.setLevel(logging.INFO)
+        logging.getLogger().addHandler(handler)
+    except Exception:
+        handler = None  # the inner run reports a missing folder in plain words
+
+    root = logging.getLogger()
+    previous_level = root.level
+    if handler is not None and (previous_level == logging.NOTSET or previous_level > logging.INFO):
+        root.setLevel(logging.INFO)
+    try:
+        result = _populate_monthly_forecast_from_tableau(
+            forecast_folder=forecast_folder,
+            tableau_workbook_path=tableau_workbook_path,
+            fiscal_year=fiscal_year,
+            forecast_month=forecast_month,
+            forecast_year=forecast_year,
+            forecast_start=forecast_start,
+            categories=categories,
+        )
+        logging.getLogger("step2").info(
+            "%s: %s sheets updated, %s not updated",
+            tag, result["routes_passed"], result["routes_failed"],
+        )
+        for item in result["failed"]:
+            logging.getLogger("step2").warning("Not updated: %s / %s: %s",
+                                               item["workbook"], item["worksheet"], item["error"])
+        for item in result.get("check_manually", []):
+            logging.getLogger("step2").warning("Check by hand (retried): %s / %s",
+                                               item["workbook"], item["worksheet"])
+        if handler is not None:
+            result["run_log"] = str(log_path)
+        return result
+    finally:
+        if handler is not None:
+            root.removeHandler(handler)
+            root.setLevel(previous_level)
+            handler.close()

@@ -967,6 +967,8 @@ class ForecastRefreshView(tb.Frame):
             if len(failed) > 10:
                 lines.append(f"...and {len(failed) - 10} more (see the log).")
             lines.append(self._population_notes(result))
+            if result.get("validation_folder"):
+                lines.append(f"Tableau extract and run log saved in:\n{result['validation_folder']}")
             messagebox.showwarning(
                 f"Update from Tableau - {category}",
                 "\n".join(lines),
@@ -982,6 +984,8 @@ class ForecastRefreshView(tb.Frame):
                     "Formulas in the workbooks were kept.\n"
                     + self._blank_month_note(result)
                     + self._population_notes(result)
+                    + (f"\nTableau extract and run log saved in:\n{result['validation_folder']}\n"
+                       if result.get("validation_folder") else "")
                     + "\n"
                     f"Next: click Validate under {category} (step 3) to compare "
                     "the Excel totals to the individual Tableau workbooks."

@@ -153,3 +153,67 @@ def test_missing_or_hidden_tabs_are_named_precisely(tmp_path):
     assert "is hidden in FY27 Forecast.twb" in problems["ALIV Head Office"] and "Unhide" in problems["ALIV Head Office"]
     assert 'no tab called "ALIV Head Offices". The closest tab names are: "ALIV Head Office"' in problems["ALIV Head Offices"]
     assert problems["Board"].endswith("tell support to change the mapping.")
+
+
+def test_step_2_writes_only_workbooks_to_the_output_folder(tmp_path, monkeypatch):
+    """Extract, raw copies and run log go to the month's Forecast Validation folder."""
+    from datetime import datetime as dt
+
+    from openpyxl import load_workbook
+
+    from shared import settings
+
+    validation_root = tmp_path / "Teams FP&A" / "Validation Results"
+    validation_root.mkdir(parents=True)
+    real_get_path = settings.get_path
+    monkeypatch.setattr(settings, "get_path", lambda key: validation_root
+                        if key == "forecast_validation_output_root" else real_get_path(key))
+
+    output = tmp_path / "Forecast Oct"
+    output.mkdir()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ALIV"
+    ws.append(["Forecast Type", "GL Sub Segment code",
+               *[dt(2026 + (m < 7), m, 1) for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)], "Grand Total"])
+    ws.append(["FY27 Forecast_102026", 600, *[1] * 12, "=SUM(C2:N2)"])
+    ws.append([None, None, *[f"=SUM({c}2:{c}2)" for c in "CDEFGHIJKLMNO"]])
+    wb.save(output / "FY27 OPEX Legal_Oct Forecast.xlsx")
+
+    twb = tmp_path / "FY27 Forecast.twb"
+    twb.write_text(TWB.format(start="2026-10-01", ftype="FY27 Forecast_102026")
+                   .replace("<worksheets>", "<worksheets><worksheet name='ALIV Legal' />"), encoding="utf-8")
+
+    route = {"tableau_worksheet": "ALIV Legal", "workbook": "FY27 OPEX Legal_Aug Forecast.xlsx",
+             "excel_sheet": "ALIV", "category": "OPEX"}
+    monkeypatch.setattr(service, "routes_for", lambda categories: [route])
+    monkeypatch.setattr(service, "_make_sure_tableau_is_open", lambda path: None)
+    months = ["Jul-26", "Aug-26", "Sep-26", "Oct-26", "Nov-26", "Dec-26",
+              "Jan-27", "Feb-27", "Mar-27", "Apr-27", "May-27", "Jun-27"]
+
+    def fake_extract(tableau_workbook_path, worksheet_names, raw_output_folder=None):
+        raw_output_folder.mkdir(parents=True, exist_ok=True)
+        (raw_output_folder / "01_ALIV_Legal.txt").write_text("raw", encoding="utf-8")
+        return {"ALIV Legal": [{"GL Sub Segment code": "600", **{m: "5" for m in months}}]}, {}
+
+    monkeypatch.setattr(service, "extract_forecast_worksheets", fake_extract)
+
+    result = service.populate_monthly_forecast_from_tableau(
+        output, twb, "FY27", 10, 2026, date(2026, 10, 1), ["OPEX"])
+
+    assert result["routes_passed"] == 1 and not result["failed"]
+    assert [p.name for p in output.iterdir()] == ["FY27 OPEX Legal_Oct Forecast.xlsx"]
+    month = validation_root / "FY27" / "2026-10 - October" / "Forecast Validation"
+    assert (month / "Tableau Extracts" / "Tableau_Forecast_Extract_2026-10_OPEX.xlsx").is_file()
+    assert (month / "Tableau Raw Copies" / "01_ALIV_Legal.txt").is_file()
+    (log,) = (month / "Logs").iterdir()
+    assert log.name.startswith("Step 2 - OPEX - ") and "1 sheets updated" in log.read_text(encoding="utf-8")
+    assert load_workbook(output / "FY27 OPEX Legal_Oct Forecast.xlsx")["ALIV"]["F2"].value == 5
+
+
+def test_missing_validation_folder_is_explained(tmp_path, monkeypatch):
+    from shared import forecast_output_paths, settings
+
+    monkeypatch.setattr(settings, "get_path", lambda key: tmp_path / "not synced")
+    with pytest.raises(PlainLanguageError, match="not available on this computer"):
+        forecast_output_paths.get_forecast_validation_output_folder("FY27", 10, 2026, create=True)

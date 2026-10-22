@@ -41,11 +41,14 @@ def get_forecast_validation_output_folder(
 
     if create:
         if not validation_root.exists():
-            raise FileNotFoundError(
-                "The forecast validation folder was not found.\n\n"
-                f"Expected:\n{validation_root}\n\n"
-                "Make sure the shared folder is available and synced, "
-                "or set the folder in settings.json."
+            from shared.friendly_errors import PlainLanguageError
+
+            raise PlainLanguageError(
+                "The forecast validation folder is not available on this computer:\n"
+                f"{validation_root}\n\n"
+                "Open OneDrive and check the shared folder is synced (or its shortcut is "
+                "added to My files), then run again. Support can point the app to a "
+                'different folder with "forecast_validation_output_root" in settings.json.'
             )
         output_folder.mkdir(parents=True, exist_ok=True)
 
