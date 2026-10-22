@@ -393,3 +393,18 @@ def test_forecast_start_is_a_date_in_the_report(tmp_path):
     header = [c.value for c in detail[1]]
     cell = detail.cell(2, header.index("Forecast Start") + 1)
     assert cell.value == datetime(2026, 9, 1) and cell.number_format == "mm/dd/yyyy"
+
+
+def test_total_row_with_a_total_label_is_the_total_row(tmp_path):
+    # HR's template puts "Total" in the description column of its total row.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ALIV"
+    months = [datetime(2026 if m >= 7 else 2027, m, 1) for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)]
+    ws.append(["Forecast Type", "GL Sub Segment code", "GL Sub Account Description", *months, "Grand Total"])
+    ws.append(["FY27 Forecast_102026", "600021", "PAYROLL", *[100] * 12, "=SUM(D2:O2)"])
+    ws.append(["FY27 Forecast_102026", "610004", "RECRUITMENT", *[1] * 12, "=SUM(D3:O3)"])
+    ws.append([None, None, "Total", *[f"=SUM({c}2:{c}3)" for c in "DEFGHIJKLMNOP"]])
+    path = tmp_path / "FY27 OPEX Human Resources_Oct Forecast.xlsx"
+    wb.save(path)
+    assert vs.get_excel_forecast_grand_total(path, "ALIV") == 1212

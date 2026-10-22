@@ -1229,7 +1229,21 @@ def _detail_range(ws, structure: dict) -> tuple[int, int, int | None]:
     last = first - 1
     total_row = None
     for row in range(first, ws.max_row + 1):
-        if any(ws.cell(row, col).value not in (None, "") for col in marker_cols):
+        markers = [ws.cell(row, col).value for col in marker_cols]
+        sums = any(
+            isinstance(ws.cell(row, col).value, str) and ws.cell(row, col).value.upper().startswith("=SUM(")
+            for col in month_cols
+        )
+        # A total row may carry a "Total" label (HR's template does): SUMs in
+        # the months and no other text means it is the total, not a line.
+        labelled_total = sums and all(
+            value in (None, "") or _s4norm(value) in {"total", "grand total"} for value in markers
+        ) and any(_s4norm(value) in {"total", "grand total"} for value in markers)
+        if labelled_total:
+            if total_row is None:
+                total_row = row
+            continue
+        if any(value not in (None, "") for value in markers):
             last = row
             total_row = None
             continue
