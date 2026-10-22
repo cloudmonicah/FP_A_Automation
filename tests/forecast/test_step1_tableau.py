@@ -34,13 +34,15 @@ def twb(tmp_path, monkeypatch):
     return path
 
 
-def test_sets_both_values_and_keeps_tableau_prefixes(twb):
-    period = service.set_consolidated_forecast_period(twb, "FY27", 10, 2026, date(2026, 10, 1))
+def test_sets_forecast_start_and_leaves_the_forecast_type_filter_alone(twb):
+    period = service.set_consolidated_forecast_period(twb, "FY27", 10, 2026, date(2026, 9, 1))
     text = twb.read_text(encoding="utf-8")
-    assert "value=\"#2026-10-01#\"" in text
-    assert "FY27 Forecast_102026" in text and "082026" not in text
+    assert "value=\"#2026-09-01#\"" in text
+    # The user picks Forecast Type in Tableau; the saved filter is untouched.
+    assert "FY27 Forecast_082026" in text and "102026" not in text
     assert "user:ui-domain" in text and "ns0:" not in text
-    assert period["forecast_type_updates"] == 1
+    assert period["forecast_type"] == "FY27 Forecast_102026"   # still used for Excel
+    assert period["forecast_type_updates"] == 0
 
 
 def test_a_backup_is_kept_once(twb, tmp_path):

@@ -49,7 +49,8 @@ class ForecastRefreshView(tb.Frame):
 
     One selected forecast period controls:
       - Excel Forecast Type
-      - consolidated Tableau Forecast Start / Forecast Type
+      - consolidated Tableau Forecast Start (its Forecast Type filter is
+        chosen by the user in Tableau)
       - individual Tableau validation period
     """
 
@@ -653,11 +654,10 @@ class ForecastRefreshView(tb.Frame):
             "Run Monthly Forecast",
             (
                 f"Run the forecast for {period['display']}?\n\n"
-                f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
-                f"Forecast Type: {period['forecast_type']}\n\n"
-                "These same period values will be used for Excel, "
-                "the consolidated Tableau workbook, and individual "
-                "Tableau validation."
+                f"Forecast Start (set in Tableau): {period['forecast_start']:%m/%d/%Y}\n"
+                f"Forecast Type (Excel workbooks): {period['forecast_type']}\n\n"
+                "In the consolidated Tableau workbook you choose the Forecast "
+                "Type filter yourself once it opens; the app does not change it."
             ),
             parent=self.winfo_toplevel(),
         )
@@ -722,9 +722,9 @@ class ForecastRefreshView(tb.Frame):
         self.status_var.set("Waiting for Tableau")
         self.status_description_var.set(
             f"Tableau is open for {period['display']}. "
-            f"Forecast Start = {period['forecast_start']:%m/%d/%Y}; "
-            f"Forecast Type = {period['forecast_type']}. "
-            "Allow Tableau to finish loading, then continue."
+            f"Forecast Start = {period['forecast_start']:%m/%d/%Y}. "
+            "Choose the Forecast Type filter in Tableau and let it refresh, "
+            "then click Update."
         )
 
         self.prepare_button.configure(state="normal")
@@ -767,11 +767,12 @@ class ForecastRefreshView(tb.Frame):
                 lines.append(f"  ...and {len(warnings) - 8} more (see the log).")
         lines += [
             "",
-            f"Forecast Start: {period['forecast_start']:%m/%d/%Y}",
-            f"Forecast Type: {period['forecast_type']}",
+            f"Forecast Start (Tableau): {period['forecast_start']:%m/%d/%Y}",
+            f"Forecast Type (Excel workbooks): {period['forecast_type']}",
             "",
-            "Tableau is opening. Wait for it to finish loading and refreshing, "
-            "then click Update for each category under step 2.",
+            "Tableau is opening. When it has loaded, choose the Forecast Type "
+            "filter you want and let it refresh, then click Update for each "
+            "category under step 2.",
         ]
         (messagebox.showwarning if failures or older or warnings else messagebox.showinfo)(
             "Forecast Workbooks Created",
@@ -815,11 +816,12 @@ class ForecastRefreshView(tb.Frame):
             "Update Workbooks from Tableau",
             (
                 f"Update the {category} workbooks ({len(routes_for([category]))} sheets)?\n\n"
-                "This uses the Tableau workbook Step 1 opened (it is opened "
-                "again if it was closed). Nothing in it is changed.\n\n"
-                f"Forecast Start: {period['forecast_start']:%m/%d/%Y}\n"
-                f"Forecast Type: {period['forecast_type']}\n\n"
-                "Continue with crosstab extraction and Excel population?"
+                "The app copies what the Tableau workbook from Step 1 shows "
+                "(it is opened again if it was closed). Nothing in it is changed.\n\n"
+                "Check the Forecast Type filter in Tableau is the one you want "
+                "before continuing.\n\n"
+                f"Forecast Start (Tableau): {period['forecast_start']:%m/%d/%Y}\n\n"
+                "Continue?"
             ),
             parent=self.winfo_toplevel(),
         )

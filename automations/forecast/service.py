@@ -96,11 +96,11 @@ def set_consolidated_forecast_period(
     forecast_start: date | None = None,
 ) -> dict:
     """
-    Set the consolidated FY Forecast workbook to the GUI-selected period.
+    Set Forecast Start in the consolidated FY Forecast workbook.
 
-    Forecast Start uses the already-tested tableau_service implementation.
-    Forecast Type updates saved categorical member selections that contain
-    the monthly FYxx Forecast_MMYYYY value.
+    The Forecast Type filter is left exactly as saved: the person running the
+    forecast chooses it in Tableau once the workbook is open. (The Excel
+    workbooks still get the selected month's Forecast Type in Step 1.)
     """
     path = Path(tableau_workbook_path)
     period = build_forecast_period(
@@ -117,60 +117,7 @@ def set_consolidated_forecast_period(
         forecast_year=period["forecast_start"].year,
     )
 
-    tree = ET.parse(path)
-    root = tree.getroot()
-
-    target = period["forecast_type"]
-    changed = 0
-
-    # Update saved Forecast Type filter members.
-    for groupfilter in root.iter("groupfilter"):
-        member = str(groupfilter.get("member") or "").strip('"')
-        if re.fullmatch(r"FY\d{2} Forecast_\d{6}", member, re.I):
-            groupfilter.set("member", f'"{target}"')
-            changed += 1
-
-    # Also update parameter-style declarations if a workbook uses them.
-    for column in root.iter("column"):
-        caption = re.sub(
-            r"[^a-z0-9]+",
-            "",
-            str(column.get("caption") or "").casefold(),
-        )
-        if caption != "forecasttype":
-            continue
-
-        value = str(column.get("value") or "").strip('"')
-        if re.fullmatch(r"FY\d{2} Forecast_\d{6}", value, re.I):
-            column.set("value", f'"{target}"')
-            calculation = column.find("calculation")
-            if calculation is not None:
-                formula = str(calculation.get("formula") or "")
-                if re.search(r"FY\d{2} Forecast_\d{6}", formula, re.I):
-                    calculation.set("formula", f'"{target}"')
-            changed += 1
-
-    tree.write(path, encoding="utf-8", xml_declaration=True)
-
-    # Verify Forecast Type was actually written where applicable.
-    verify = ET.parse(path).getroot()
-    saved_members = [
-        str(item.get("member") or "").strip('"')
-        for item in verify.iter("groupfilter")
-        if re.fullmatch(
-            r"FY\d{2} Forecast_\d{6}",
-            str(item.get("member") or "").strip('"'),
-            re.I,
-        )
-    ]
-
-    if changed and target not in saved_members:
-        raise RuntimeError(
-            "Forecast Type was updated but could not be verified.\n"
-            f"Expected: {target}"
-        )
-
-    period["forecast_type_updates"] = changed
+    period["forecast_type_updates"] = 0
     return period
 
 
@@ -248,7 +195,7 @@ def consolidated_tab_problems(tableau_workbook_path: str | Path, tab_names) -> d
 
 
 def check_consolidated_forecast_period(tableau_workbook_path: str | Path, period: dict) -> None:
-    """Step 2 reads the workbook Step 1 prepared; stop if it is set to another period.
+    """Step 2 reads the workbook Step 1 prepared; stop if Forecast Start differs.
 
     Step 2 does not rewrite the .twb: Tableau already has it open, and a change
     on disk would not reach the open window, so the copy would use old values.
@@ -261,11 +208,8 @@ def check_consolidated_forecast_period(tableau_workbook_path: str | Path, period
             f"Forecast Start in Tableau is {shown}, but this page has "
             f"{period['forecast_start']:%Y-%m-%d}"
         )
-    if saved["forecast_types"] and saved["forecast_types"] != [period["forecast_type"]]:
-        problems.append(
-            f"Forecast Type in Tableau is {', '.join(saved['forecast_types'])}, "
-            f"but this page has {period['forecast_type']}"
-        )
+    # Forecast Type is chosen by the user in the open Tableau window, so it
+    # is not compared here.
     if problems:
         raise PlainLanguageError(
             "The Tableau workbook is not set to the period on this page:\n  - "
