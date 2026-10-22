@@ -148,7 +148,7 @@ FORECAST_ROUTES = [
     {
         "tableau_worksheet": "ALIV Facilities - Engineering",
         "workbook": "FY27 OPEX Engineering & Technology_Aug Forecast.xlsx",
-        "excel_sheet": "Facilities - ALIV ",
+        "excel_sheet": "Facilities - ALIV",
         "individual_tableau_folder": workbook_path("OPEX"),
         "category": "OPEX",
         "individual_tableau_workbook": "Group Premises & Facilities_ALL Departments.twb",
@@ -421,7 +421,7 @@ FORECAST_ROUTES = [
         "validation_filter_note": "MARKETING / Media; company filter must be confirmed",
     },
     {
-        "tableau_worksheet": "ALIV  OPERATIONS ",
+        "tableau_worksheet": "ALIV OPERATIONS",
         "workbook": "FY27 OPEX Operations_Aug Forecast.xlsx",
         "excel_sheet": "ALIV",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -432,7 +432,7 @@ FORECAST_ROUTES = [
         "validation_status": "confirmed",
     },
     {
-        "tableau_worksheet": "CBL  OPERATIONS",
+        "tableau_worksheet": "CBL OPERATIONS",
         "workbook": "FY27 OPEX Operations_Aug Forecast.xlsx",
         "excel_sheet": "CBL",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -443,7 +443,7 @@ FORECAST_ROUTES = [
         "validation_status": "confirmed",
     },
     {
-        "tableau_worksheet": "CBL  OUTSIDE PLANT",
+        "tableau_worksheet": "CBL OUTSIDE PLANT",
         "workbook": "FY27 OPEX OSP Outside Plant_Aug Forecast.xlsx",
         "excel_sheet": "OSP Outside Plant- CBL",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -594,7 +594,7 @@ FORECAST_ROUTES = [
     {
         "tableau_worksheet": "ALIV Below the Line Details_ Monthly",
         "workbook": "FY27 ALIV BELOW THE LINE_Aug Forecast.xlsx",
-        "excel_sheet": " Finance - ALIV",
+        "excel_sheet": "Finance - ALIV",
         "individual_tableau_folder": workbook_path("Below the Line"),
         "category": "Other",
         "individual_tableau_workbook": "Cable Bahamas Group_Below the Line.twb",
