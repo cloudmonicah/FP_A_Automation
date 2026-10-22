@@ -12,31 +12,56 @@ log = logging.getLogger(__name__)
 
 
 def confirm_close_tableau(widget) -> bool:
-    """Before a run that opens Tableau: warn that open workbooks will close.
+    """Before a run that opens Tableau: save (or not) and close open workbooks.
 
-    Returns False if the person cancels.
+    Saving happens here, before the run changes any .twb file; saving later
+    would write Tableau's older on-screen values over the run's changes.
+    Returns False if the person cancels or a workbook could not be closed.
     """
     try:
         from automations.actuals.tableau_desktop_close_service import (
+            close_all_tableau_workbooks,
             list_open_tableau_workbooks,
         )
 
         open_workbooks = list_open_tableau_workbooks()
     except Exception:
-        # Not on Windows, or Tableau can't be inspected: nothing to warn about.
+        # Not on Windows, or Tableau can't be inspected: nothing to close.
         return True
     if not open_workbooks:
         return True
     shown = "\n".join(f"  • {t}" for t in open_workbooks[:8])
     more = f"\n  …and {len(open_workbooks) - 8} more" if len(open_workbooks) > 8 else ""
-    return messagebox.askokcancel(
+    answer = messagebox.askyesnocancel(
         "Close Tableau workbooks?",
-        "These Tableau workbooks are open and will be closed WITHOUT saving "
-        f"before the run starts:\n\n{shown}{more}\n\n"
-        "Save any Tableau work you want to keep, then click OK.",
+        f"These Tableau workbooks are open and will be closed before the run starts:\n\n"
+        f"{shown}{more}\n\n"
+        "Save your changes to them first?\n\n"
+        "Yes - save and close\nNo - close without saving\nCancel - don't start the run",
         icon="warning",
         parent=widget.winfo_toplevel(),
     )
+    if answer is None:
+        return False
+
+    top = widget.winfo_toplevel()
+    top.configure(cursor="watch")
+    top.update_idletasks()
+    try:
+        result = close_all_tableau_workbooks(save=bool(answer))
+    finally:
+        top.configure(cursor="")
+    if result.get("warning"):
+        messagebox.showwarning(
+            "Close Tableau workbooks",
+            "Some Tableau workbooks are still open, so the run did not start:\n\n"
+            + result["warning"].split(": ", 1)[-1]
+            + "\n\nSave or close them in Tableau yourself (Tableau may be waiting for "
+            "an answer, such as where to save), then click the button again.",
+            parent=top,
+        )
+        return False
+    return True
 
 
 def _flash_taskbar(window) -> None:
