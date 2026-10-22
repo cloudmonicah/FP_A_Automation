@@ -216,16 +216,17 @@ def get_individual_tableau_grand_total(
     grand_total_row = None
 
     for row in tableau_rows:
-        # The label sits under Company; a tab without a Company column (ALIV
-        # Head Office) puts it in its first column instead.
-        label = row.get("Company") if "Company" in row else next(iter(row.values()), None)
-        if _norm(label) == "grand total":
+        # Tableau puts the "Grand Total" label in the first column of the row
+        # (Company on most tabs, GL Account Mapping on ALIV Head Office, ...),
+        # so look in every column except the Grand Total value itself.
+        labels = [value for key, value in row.items() if key != "Grand Total"]
+        if any(_norm(value) == "grand total" for value in labels):
             grand_total_row = row
 
     if grand_total_row is None:
         raise RuntimeError(
             "Individual Tableau crosstab does not contain "
-            'a row where Company = "Grand Total".'
+            'a row where Company = "Grand Total" (no Grand Total row in any column).'
         )
 
     if "Grand Total" not in grand_total_row:
@@ -762,9 +763,14 @@ def run_grouped_individual_validation(
     open_wait_seconds: float = 8.0,
     forecast_start: date | None = None,
     forecast_type: str | None = None,
+    raw_output_folder: str | Path | None = None,
 ) -> dict:
     """
     Stage 5B controlled runner.
+
+    ``raw_output_folder``: where a copy of each individual Tableau crosstab is
+    kept (Forecast Validation\\Tableau Raw Copies\\Step 3), so a variance can be
+    checked against exactly what Tableau showed.
 
     ``forecast_start`` / ``forecast_type`` come from the selected period
     (October 2026 -> 10/1/2026 and FY27 Forecast_102026).
@@ -869,6 +875,8 @@ def run_grouped_individual_validation(
             tableau_rows = get_tableau_crosstab_rows(
                 worksheet_name=route["individual_tableau_worksheet"],
                 tableau_workbook_path=temporary,
+                **({"raw_output_folder": raw_output_folder,
+                    "sequence_number": len(results) + 1} if raw_output_folder else {}),
             )
 
             result = validate_route_from_tableau_rows(

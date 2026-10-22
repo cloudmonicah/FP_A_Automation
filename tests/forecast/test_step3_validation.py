@@ -92,7 +92,7 @@ def test_one_category_is_validated_and_the_report_keeps_the_others(tmp_path, mon
     opened = []
     monkeypatch.setattr(ts, "open_tableau_workbook", lambda tableau_workbook_path: opened.append(tableau_workbook_path))
     monkeypatch.setattr(ts, "get_tableau_crosstab_rows",
-                        lambda worksheet_name, tableau_workbook_path: [{"Company": "Grand Total", "Grand Total": "100"}])
+                        lambda worksheet_name, tableau_workbook_path, **raw: [{"Company": "Grand Total", "Grand Total": "100"}])
     monkeypatch.setattr(vs, "close_individual_tableau_workbook", lambda path: {"closed": True, "warning": None})
     monkeypatch.setattr("time.sleep", lambda s: None)
 
@@ -264,3 +264,11 @@ def test_step3_message_all_matched_is_information():
 
     attention, text = step3_message("Revenue", {"results": [{"category": "Revenue", "status": "PASS"}] * 6})
     assert not attention and text.startswith("Revenue: all 6 checked sheets match Tableau")
+
+
+def test_grand_total_label_in_another_column():
+    # Mobile Consumer SAC: the tab has a Company column, but the label sits in
+    # its first column (Bus Code Name) and Company is blank on that row.
+    rows = [{"Bus Code Name": "SAC", "Company": "ALIV", "Grand Total": "10"},
+            {"Bus Code Name": "Grand Total", "Company": None, "Grand Total": "(2,500)"}]
+    assert vs.get_individual_tableau_grand_total(rows) == -2500

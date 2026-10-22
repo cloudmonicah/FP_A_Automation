@@ -616,6 +616,7 @@ def validate_monthly_forecast(
         tolerance=tolerance,
         forecast_start=period["forecast_start"],
         forecast_type=period["forecast_type"],
+        raw_output_folder=validation_output_folder / "Tableau Raw Copies" / "Step 3",
     )
 
     all_results = merge_saved_results(
