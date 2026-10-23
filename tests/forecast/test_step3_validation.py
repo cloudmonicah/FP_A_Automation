@@ -505,3 +505,56 @@ def test_report_has_no_period_mode_column(tmp_path):
     from shared.forecast_validation_report import write_forecast_validation_report
     import inspect
     assert "Period Mode" not in inspect.getsource(write_forecast_validation_report)
+
+
+def test_status_panel_shows_one_runs_figures():
+    from ui.forecast_messages import status_tiles
+    result = {"results": [
+        {"category": "Revenue", "forecast_workbook": "A.xlsx", "status": "PASS"},
+        {"category": "Revenue", "forecast_workbook": "A.xlsx", "status": "FAIL"},
+        {"category": "Revenue", "forecast_workbook": "B.xlsx", "status": "NOT VALIDATED"},
+        {"category": "OPEX", "forecast_workbook": "C.xlsx", "status": "PASS"}]}
+    tiles, title, text = status_tiles(3, "Revenue", result)
+    assert tiles == {"workbooks": 2, "sheets": 3, "passed": 1, "failed": 1, "action": 0}
+    assert title == "Revenue: Review Required" and "1 not checked" in text
+    tiles, title, _ = status_tiles(2, "OPEX", {"passed": [{}] * 37, "failed": [], "workbooks_updated": 20})
+    assert tiles["sheets"] == 37 and tiles["passed"] == "-" and title == "OPEX workbooks updated"
+
+
+def test_tab_names_match_ignoring_extra_spaces(tmp_path):
+    source = tmp_path / "Legal.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    prepared = vs._prepare_individual_forecast_copy(
+        source=source, destination=source, tab="Monthly  Forecast ", company="CBL",
+        forecast_start=date(2026, 10, 1), forecast_type="FY27 Forecast_102026",
+    )
+    assert prepared["worksheet"] == "Monthly Forecast"
+
+
+def test_a_tab_tableau_could_not_open_is_tried_once_more(tmp_path, monkeypatch):
+    from automations.forecast import tableau_service
+    calls = []
+
+    def copy_rows(worksheet_name, **_):
+        calls.append(worksheet_name)
+        if len(calls) == 1:
+            raise RuntimeError(f'Tableau worksheet "{worksheet_name}" could not be selected after 3 attempts.')
+        return [{"Company": "Grand Total", "Grand Total": "5"}]
+
+    source = tmp_path / "Legal.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    monkeypatch.setattr(tableau_service, "open_tableau_workbook", lambda **_: None)
+    monkeypatch.setattr(tableau_service, "get_tableau_crosstab_rows", copy_rows)
+    monkeypatch.setattr(vs, "close_individual_tableau_workbook", lambda *_: {"closed": True})
+    monkeypatch.setattr(vs, "validate_route_from_tableau_rows",
+                        lambda route, tableau_rows, **_: {"status": "PASS", "tableau_rows": tableau_rows})
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda *_: None)
+    route = {"category": "OPEX", "workbook": "FY27 OPEX Legal_Aug Forecast.xlsx", "excel_sheet": "CBL",
+             "individual_tableau_folder": str(tmp_path), "individual_tableau_workbook": "Legal.twb",
+             "individual_tableau_worksheet": "Monthly Forecast", "validation_status": "confirmed"}
+    out = vs.run_grouped_individual_validation(
+        routes=[route], forecast_folder=tmp_path, target_month_abbr="Oct", forecast_month=10,
+        forecast_year=2026, open_wait_seconds=0, forecast_start=date(2026, 10, 1),
+        forecast_type="FY27 Forecast_102026")
+    assert len(calls) == 2 and out["results"][0]["status"] == "PASS"

@@ -41,7 +41,7 @@ MONTH_LOOKUP = {
 
 
 from ui.common import confirm_close_tableau, get_attention
-from ui.forecast_messages import step2_message, step3_message
+from ui.forecast_messages import status_tiles, step2_message, step3_message
 
 log = logging.getLogger(__name__)
 
@@ -345,8 +345,8 @@ class ForecastRefreshView(tb.Frame):
             stats.columnconfigure(col, weight=1)
 
         self._stat(stats, 0, self.files_created_var, "Workbooks")
-        self._stat(stats, 1, self.worksheets_updated_var, "Sheets Updated")
-        self._stat(stats, 2, self.validation_passed_var, "Validated")
+        self._stat(stats, 1, self.worksheets_updated_var, "Sheets")
+        self._stat(stats, 2, self.validation_passed_var, "Passed")
         self._stat(stats, 3, self.validation_failed_var, "Failed")
         self._stat(stats, 4, self.action_required_var, "Action Required")
 
@@ -751,6 +751,9 @@ class ForecastRefreshView(tb.Frame):
         excel = result["excel"]
 
         self.files_created_var.set(str(excel.get("files_created", 0)))
+        for figure in (self.worksheets_updated_var, self.validation_passed_var,
+                       self.validation_failed_var, self.action_required_var):
+            figure.set("-")
         self.output_var.set(result["output_folder"])
         self.open_output_button.configure(state="normal")
 
@@ -915,22 +918,8 @@ class ForecastRefreshView(tb.Frame):
             f"{result['routes_passed']} updated"
             + (f", {result['routes_failed']} not" if failed else "")
         )
-        self.worksheets_updated_var.set(str(result["worksheets_updated"]))
-        self.files_created_var.set(str(result["workbooks_updated"]))
+        self._show_tiles(2, category, result)
         self.progress_var.set(75)
-
-        if failed:
-            self.status_var.set(f"{category}: some sheets not updated")
-            self.status_description_var.set(
-                f"{result['routes_passed']} sheets updated, {result['routes_failed']} not updated. "
-                "The message lists what to fix; then click Update again."
-            )
-        else:
-            self.status_var.set(f"{category} workbooks updated")
-            self.status_description_var.set(
-                f"All {result['routes_passed']} sheets were updated from Tableau. "
-                f"Next: Validate {category}."
-            )
 
         self.prepare_button.configure(state="normal")
         self._set_populate_state("normal")
@@ -1034,28 +1023,12 @@ class ForecastRefreshView(tb.Frame):
             + (f", {action} action" if action else "")
         )
 
-        self.validation_passed_var.set(str(passed))
-        self.validation_failed_var.set(str(failed))
-        self.action_required_var.set(str(action))
+        self._show_tiles(3, category, result)
         self.progress_var.set(100)
         report_path = result.get("validation_report")
-
         if report_path:
-
             self.validation_output_var.set(report_path)
-
             self.open_validation_button.configure(state="normal")
-
-        if failed or action:
-            self.status_var.set(f"{category}: Review Required")
-            self.status_description_var.set(
-                f"{passed} passed, {failed} failed, " f"{action} require action."
-            )
-        else:
-            self.status_var.set(f"{category}: Reconciled")
-            self.status_description_var.set(
-                f"All {passed} validated routes reconciled within tolerance."
-            )
 
         self.prepare_button.configure(state="normal")
         self._set_populate_state("normal")
@@ -1086,6 +1059,17 @@ class ForecastRefreshView(tb.Frame):
             friendly(error),
             parent=self.winfo_toplevel(),
         )
+
+    def _show_tiles(self, step: int, category: str, result: dict) -> None:
+        """All five figures and the title come from this one run (one step, one category)."""
+        tiles, title, description = status_tiles(step, category, result)
+        self.files_created_var.set(str(tiles["workbooks"]))
+        self.worksheets_updated_var.set(str(tiles["sheets"]))
+        self.validation_passed_var.set(str(tiles["passed"]))
+        self.validation_failed_var.set(str(tiles["failed"]))
+        self.action_required_var.set(str(tiles["action"]))
+        self.status_var.set(title)
+        self.status_description_var.set(description)
 
     def _reset_view(self) -> None:
         self.status_var.set("Ready")

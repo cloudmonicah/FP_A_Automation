@@ -175,7 +175,7 @@ SELECTIONS = {
     },
     ('FY27 OPEX Consumer Marketing & Product Development', 'COMM & PROD - ALIV'): {
         "individual_tableau_workbook": 'Consumer Marketing & Product Development.twb',
-        "individual_tableau_worksheet": 'GROUP Monthly Forecast by Subdepartment',
+        "individual_tableau_worksheet": 'GROUP Monthly Forecast Summary by Subdepartment',  # 'by Subdepartment' is saved filtered to CBL
         "validation_status": "confirmed",
         "individual_include": {
             'Company': [
@@ -203,7 +203,7 @@ SELECTIONS = {
     },
     ('FY27 OPEX Consumer Marketing & Product Development', 'Marketing - ALIV'): {
         "individual_tableau_workbook": 'Consumer Marketing & Product Development.twb',
-        "individual_tableau_worksheet": 'GROUP Monthly Forecast by Subdepartment',
+        "individual_tableau_worksheet": 'GROUP Monthly Forecast Summary by Subdepartment',  # 'by Subdepartment' is saved filtered to CBL
         "validation_status": "confirmed",
         "individual_include": {
             'Company': [
@@ -217,7 +217,7 @@ SELECTIONS = {
     },
     ('FY27 OPEX Consumer Marketing & Product Development', 'ROAMING'): {
         "individual_tableau_workbook": 'Consumer Marketing & Product Development.twb',
-        "individual_tableau_worksheet": 'GROUP Monthly Forecast by Subdepartment',
+        "individual_tableau_worksheet": 'GROUP Monthly Forecast Summary by Subdepartment',  # 'by Subdepartment' is saved filtered to CBL
         "validation_status": "confirmed",
         "individual_include": {
             'Company': [
@@ -721,12 +721,24 @@ SELECTIONS = {
         },
         # Not checkable in the individual tab's rows: GL Business Code (include 8), GL FS Category (include 24)
     },
+    ('FY27 INTERCOMPANY REVENUE', 'CBL'): {
+        # Paired with the MSA Revenue workbook (October 2026). That workbook
+        # shows Intercompany (IC) revenue for MSA REVENUE only, so other IC
+        # lines on the sheet are not in its total.
+        "individual_tableau_workbook": 'Cable Bahamas Group_MSA REVENUE.twb',
+        "individual_tableau_worksheet": 'CBL COMMERCIAL REVENUE DETAILS - Monthly Forecast',
+        "validation_status": "confirmed",
+    },
 }
 
 
 def apply(routes) -> None:
     """Update the routes in place from SELECTIONS (by forecast workbook + sheet)."""
     for route in routes:
+        # Individual tab names were tidied in Tableau (no leading, trailing or
+        # double spaces); the app matches them ignoring spaces either way.
+        if route.get("individual_tableau_worksheet"):
+            route["individual_tableau_worksheet"] = " ".join(route["individual_tableau_worksheet"].split())
         stem = route["workbook"].rsplit("_", 1)[0]
         change = SELECTIONS.get((stem, route["excel_sheet"]))
         if change:

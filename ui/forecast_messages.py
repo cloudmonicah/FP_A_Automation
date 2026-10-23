@@ -120,3 +120,36 @@ def step3_message(category: str, result: dict) -> tuple[bool, str]:
         lines += ["", f"Validation report: {result['validation_report']}",
                   "Its Summary shows Last Updated; use Open Validation Report on this page to open it."]
     return bool(attention), "\n".join(lines)
+
+
+def status_tiles(step: int, category: str, result: dict) -> tuple[dict, str, str]:
+    """(tile values, title, one-line description) for the Process Status panel.
+
+    Every tile describes the same run - the last Step 2 or Step 3 for one
+    category - so figures from different steps or categories are never mixed.
+    """
+    dash = "-"
+    if step == 2:
+        failed = len(result.get("failed", []))
+        passed = len(result.get("passed", []))
+        tiles = {"workbooks": result.get("workbooks_updated", 0), "sheets": passed,
+                 "passed": dash, "failed": failed if failed else 0, "action": dash}
+        if failed:
+            return tiles, f"{category}: some sheets not updated", (
+                f"Step 2 - {passed} sheets updated, {failed} not updated. "
+                "The message lists what to fix; then click Update again.")
+        return tiles, f"{category} workbooks updated", (
+            f"Step 2 - all {passed} sheets updated from Tableau. Next: Validate {category}.")
+
+    rows = [item for item in result.get("results", []) if item.get("category", category) == category]
+    count = lambda status: sum(item.get("status") == status for item in rows)
+    passed, failed, action, skipped = (count("PASS"), count("FAIL"),
+                                       count("ACTION REQUIRED"), count("NOT VALIDATED"))
+    tiles = {"workbooks": len({item.get("forecast_workbook") for item in rows}), "sheets": len(rows),
+             "passed": passed, "failed": failed, "action": action}
+    extra = f", {skipped} not checked" if skipped else ""
+    if failed or action:
+        return tiles, f"{category}: Review Required", (
+            f"Step 3 - {passed} passed, {failed} failed, {action} need action{extra}.")
+    return tiles, f"{category}: Reconciled", (
+        f"Step 3 - all {passed} checked sheets match Tableau within $1,000{extra}.")

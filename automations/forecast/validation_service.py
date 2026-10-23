@@ -486,6 +486,14 @@ def validate_route_from_tableau_rows(
 # ============================================================
 
 
+_TAB_NOT_OPENED = re.compile(r"could not be selected|was not found among controls", re.I)
+
+
+def _same_tab_name(left, right) -> bool:
+    """Tab names match ignoring case and extra spaces (renamed tabs had trailing spaces)."""
+    return " ".join(str(left or "").split()).casefold() == " ".join(str(right or "").split()).casefold()
+
+
 def _validation_parameter_key(value) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
 
@@ -525,12 +533,17 @@ def _prepare_individual_forecast_copy(
         sheet
         for sheet in root.findall("./worksheets/worksheet")
         if sheet.get("name") == tab
+    ] or [
+        sheet
+        for sheet in root.findall("./worksheets/worksheet")
+        if _same_tab_name(sheet.get("name"), tab)
     ]
 
     if len(target_sheets) != 1:
         raise ValueError(f"Individual Tableau worksheet not found: {tab}")
 
     target_sheet = target_sheets[0]
+    tab = target_sheet.get("name")  # the tab's name as saved in the workbook
 
     # --------------------------------------------------------
     # FORECAST START
@@ -997,8 +1010,6 @@ def run_grouped_individual_validation(
         # is read by its company subtotal row instead.
         temporary = source
 
-        opened = False
-
         workbook_record = {
             "source": str(source),
             "workbook": str(source),
@@ -1011,74 +1022,80 @@ def run_grouped_individual_validation(
             "error": "",
         }
 
+        def check_once(wait_seconds, route=route, source=source, record=workbook_record):
+            """Set the period, open the workbook, copy the tab, compare; always close."""
+            opened = False
+            try:
+                preparation = _prepare_individual_forecast_copy(
+                    source=source,
+                    destination=source,
+                    tab=route["individual_tableau_worksheet"],
+                    company=route.get("company_filter"),
+                    forecast_start=forecast_start,
+                    forecast_type=forecast_type,
+                )
+                record["forecast_start"] = preparation["forecast_start_value"]
+                record["forecast_type"] = preparation["forecast_type"]
+                record["period_mode"] = preparation["period_mode"]
+
+                open_tableau_workbook(tableau_workbook_path=source)
+                opened = True
+                record["opened"] = True
+                if wait_seconds:
+                    time.sleep(wait_seconds)
+
+                tableau_rows = get_tableau_crosstab_rows(
+                    worksheet_name=preparation["worksheet"],
+                    tableau_workbook_path=source,
+                    **({"raw_output_folder": raw_output_folder,
+                        "sequence_number": len(results) + 1} if raw_output_folder else {}),
+                )
+                result = validate_route_from_tableau_rows(
+                    route=route,
+                    forecast_folder=forecast_folder,
+                    target_month_abbr=target_month_abbr,
+                    tableau_rows=tableau_rows,
+                    tolerance=tolerance,
+                )
+                result["forecast_start"] = preparation["forecast_start_value"]
+                result["forecast_type"] = preparation["forecast_type"]
+                result["period_mode"] = preparation["period_mode"]
+                return result
+            finally:
+                if opened:
+                    close_result = close_individual_tableau_workbook(source)
+                else:
+                    close_result = {"closed": True, "warning": None}
+                record["closed"] = bool(close_result.get("closed"))
+                warning = close_result.get("warning")
+                if warning:
+                    record["error"] = (record["error"] + " | " if record["error"] else "") + f"Close warning: {warning}"
+
         try:
-            preparation = _prepare_individual_forecast_copy(
-                source=source,
-                destination=temporary,
-                tab=route["individual_tableau_worksheet"],
-                company=route.get("company_filter"),
-                forecast_start=forecast_start,
-                forecast_type=forecast_type,
-            )
-
-            workbook_record["forecast_start"] = preparation["forecast_start_value"]
-            workbook_record["forecast_type"] = preparation["forecast_type"]
-            workbook_record["period_mode"] = preparation["period_mode"]
-
-            open_tableau_workbook(
-                tableau_workbook_path=temporary,
-            )
-
-            opened = True
-            workbook_record["opened"] = True
-
-            if open_wait_seconds:
-                time.sleep(open_wait_seconds)
-
-            tableau_rows = get_tableau_crosstab_rows(
-                worksheet_name=route["individual_tableau_worksheet"],
-                tableau_workbook_path=temporary,
-                **({"raw_output_folder": raw_output_folder,
-                    "sequence_number": len(results) + 1} if raw_output_folder else {}),
-            )
-
-            result = validate_route_from_tableau_rows(
-                route=route,
-                forecast_folder=forecast_folder,
-                target_month_abbr=target_month_abbr,
-                tableau_rows=tableau_rows,
-                tolerance=tolerance,
-            )
-
-            result["forecast_start"] = preparation["forecast_start_value"]
-            result["forecast_type"] = preparation["forecast_type"]
-            result["period_mode"] = preparation["period_mode"]
+            try:
+                result = check_once(open_wait_seconds)
+            except Exception as first_error:
+                # The first workbook of a run often opens while Tableau is
+                # still starting, so its tab can't be clicked yet. Try that
+                # workbook once more, giving Tableau longer to settle.
+                if not _TAB_NOT_OPENED.search(str(first_error)):
+                    raise
+                time.sleep(3)
+                result = check_once((open_wait_seconds or 0) * 2 + 5)
 
             results.append(result)
-
-            workbook_record["status"] = (
-                "PASS" if result["status"] == "PASS" else "VALIDATED"
-            )
+            workbook_record["status"] = "PASS" if result["status"] == "PASS" else "VALIDATED"
 
         except Exception as exc:
             error = explain(exc)
-
             workbook_record["status"] = "ACTION REQUIRED"
             workbook_record["error"] = error
-
             results.append(
                 {
-                    "forecast_workbook": resolve_forecast_workbook_name(
-                        route["workbook"],
-                        target_month_abbr,
-                    ),
+                    "forecast_workbook": resolve_forecast_workbook_name(route["workbook"], target_month_abbr),
                     "worksheet": route["excel_sheet"],
-                    "individual_tableau_workbook": route.get(
-                        "individual_tableau_workbook"
-                    ),
-                    "individual_tableau_worksheet": route.get(
-                        "individual_tableau_worksheet"
-                    ),
+                    "individual_tableau_workbook": route.get("individual_tableau_workbook"),
+                    "individual_tableau_worksheet": route.get("individual_tableau_worksheet"),
                     "excel_grand_total": None,
                     "tableau_grand_total": None,
                     "variance": None,
@@ -1087,26 +1104,7 @@ def run_grouped_individual_validation(
                 }
             )
 
-        finally:
-            if opened:
-                close_result = close_individual_tableau_workbook(temporary)
-            else:
-                close_result = {
-                    "closed": True,
-                    "warning": None,
-                }
-
-            workbook_record["closed"] = bool(close_result.get("closed"))
-
-            warning = close_result.get("warning")
-
-            if warning:
-                if workbook_record["error"]:
-                    workbook_record["error"] += f" | Close warning: {warning}"
-                else:
-                    workbook_record["error"] = f"Close warning: {warning}"
-
-            workbook_results.append(workbook_record)
+        workbook_results.append(workbook_record)
 
     # One result per selected route, in order: tag each with its category.
     for route, item in zip(selected_routes, results):
