@@ -1,0 +1,560 @@
+"""Step 3: validate one category at a time; the month's report keeps the others."""
+
+import xml.etree.ElementTree as ET
+from datetime import date, datetime
+
+from openpyxl import Workbook, load_workbook
+
+from automations.forecast import service
+from automations.forecast import tableau_service as ts
+from automations.forecast import validation_service as vs
+
+FORECAST_TYPE_TAB = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook>
+  <datasources><datasource name='Parameters'>
+    <column caption='Forecast Start' name='[Parameter 1]' param-domain-type='range' value='#2026-08-01#' />
+  </datasource></datasources>
+  <worksheets><worksheet name='Monthly Forecast'><table><view>
+    <datasource-dependencies datasource='Parameters'>
+      <column caption='Forecast Start' name='[Parameter 1]' />
+    </datasource-dependencies>
+    <filter class='categorical' column='[ds].[none:Company:nk]'>
+      <groupfilter function='member' level='[none:Company:nk]' member='"ALIV"' />
+    </filter>
+    <filter class='categorical' column='[ds].[none:Forecast Type:nk]'>
+      <groupfilter function='union'>
+        <groupfilter function='member' level='[none:Forecast Type:nk]' member='"FY27 Forecast_092026"' />
+      </groupfilter>
+    </filter>
+  </view></table></worksheet></worksheets>
+</workbook>
+"""
+
+
+def test_forecast_type_tab_is_prepared_for_the_period(tmp_path):
+    """This used to fail on every Forecast Type tab ("measure_name" not defined)."""
+    source = tmp_path / "Legal.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    out = tmp_path / "copy.twb"
+    prepared = vs._prepare_individual_forecast_copy(
+        source=source, destination=out, tab="Monthly Forecast", company="CBL",
+        forecast_start=date(2026, 9, 1), forecast_type="FY27 Forecast_102026",
+    )
+    root = ET.parse(out).getroot()
+    members = [g.get("member") for g in root.iter("groupfilter") if g.get("function") == "member"]
+    assert prepared["period_mode"] == "Forecast Type"
+    assert '"FY27 Forecast_102026"' in members
+    # Company is left as saved: each individual tab is already built for its company.
+    assert '"ALIV"' in members and '"CBL"' not in members
+    assert next(root.iter("column")).get("value") == "#2026-09-01#"
+    assert source.read_text(encoding="utf-8") == FORECAST_TYPE_TAB  # source untouched
+
+
+def _forecast_sheet(path, sheet, total):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet
+    months = [datetime(2026 if m >= 7 else 2027, m, 1) for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)]
+    ws.append(["Forecast Type", "GL Account", *months, "Grand Total"])
+    ws.append(["FY27 Forecast_102026", "6000", total, *[0] * 11, "=SUM(C2:N2)"])
+    ws.append([None, None, *[f"=SUM({c}2:{c}2)" for c in "CDEFGHIJKLMNO"]])   # total row
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+
+
+def test_one_category_is_validated_and_the_report_keeps_the_others(tmp_path, monkeypatch):
+    twb_folder = tmp_path / "Workbooks"
+    twb_folder.mkdir()
+    (twb_folder / "Legal.twb").write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    routes = [
+        {"category": "OPEX", "workbook": "FY27 OPEX Legal_Aug Forecast.xlsx", "excel_sheet": "ALIV",
+         "individual_tableau_folder": str(twb_folder), "individual_tableau_workbook": "Legal.twb",
+         "individual_tableau_worksheet": "Monthly Forecast", "company_filter": "ALIV", "validation_status": "confirmed"},
+        {"category": "Revenue", "workbook": "FY27 OPEX Legal_Aug Forecast.xlsx", "excel_sheet": "CBL",
+         "individual_tableau_folder": str(twb_folder), "individual_tableau_workbook": "Legal.twb",
+         "individual_tableau_worksheet": "Monthly Forecast", "company_filter": "CBL", "validation_status": "confirmed"},
+    ]
+    out = tmp_path / "out"
+    wb_path = out / "FY27 OPEX Legal_Oct Forecast.xlsx"
+    _forecast_sheet(wb_path, "ALIV", 100)
+    wb = load_workbook(wb_path)
+    cbl = wb.create_sheet("CBL")
+    for row in wb["ALIV"].iter_rows(values_only=True):
+        cbl.append(list(row))
+    wb.save(wb_path)
+
+    report_folder = tmp_path / "report"
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    monkeypatch.setattr(service, "routes_for", lambda cats: [r for r in routes if r["category"] in cats])
+    monkeypatch.setattr(service, "get_forecast_validation_output_folder", lambda **k: report_folder)
+    monkeypatch.setattr("shared.tableau_temp_copies.temp_twb_path", lambda src, tag: temp / f"{tag}.twb")
+    opened = []
+    monkeypatch.setattr(ts, "open_tableau_workbook", lambda tableau_workbook_path: opened.append(tableau_workbook_path))
+    monkeypatch.setattr(ts, "get_tableau_crosstab_rows",
+                        lambda worksheet_name, tableau_workbook_path, **raw: [{"Company": "Grand Total", "Grand Total": "100"}])
+    monkeypatch.setattr(vs, "close_individual_tableau_workbook", lambda path: {"closed": True, "warning": None})
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    first = service.validate_monthly_forecast(out, "FY27", 10, 2026, categories=["OPEX"])
+    assert [(r["category"], r["status"]) for r in first["results"]] == [("OPEX", "PASS")]
+    assert len(opened) == 1  # only OPEX's workbook was opened
+
+    second = service.validate_monthly_forecast(out, "FY27", 10, 2026, categories=["Revenue"])
+    report = load_workbook(second["validation_report"])
+    detail = report["Validation Detail"]
+    header = [c.value for c in detail[1]]
+    categories = [row[header.index("Category")] for row in detail.iter_rows(min_row=2, values_only=True)]
+    assert categories == ["OPEX", "Revenue"]  # OPEX kept after running Revenue
+    summary = {row[0]: row[1] for row in report["Validation Summary"].iter_rows(values_only=True)}
+    assert summary["Forecast Start"] == datetime(2026, 10, 1)
+    assert summary["Passed"] == 2
+
+
+def test_results_saved_by_an_earlier_version_are_read(tmp_path):
+    """Live run: a .results.json from the earlier category branch crashed the report."""
+    import json
+
+    from shared.forecast_validation_report import merge_saved_results
+
+    old = {"forecast_type": "FY27 Forecast_102026", "categories": {
+        "OPEX": {"validated_at": "2026-10-15 18:00", "results": [{"status": "PASS", "category": "OPEX"}]},
+    }}
+    (tmp_path / "Forecast_Validation_Oct_2026.results.json").write_text(json.dumps(old), encoding="utf-8")
+    new = [{"status": "ACTION REQUIRED", "category": "Direct Cost"}]
+    merged = merge_saved_results(tmp_path, 10, 2026, "FY27 Forecast_102026", ["Direct Cost"], new)
+    assert [(r["category"], r["status"]) for r in merged] == [("OPEX", "PASS"), ("Direct Cost", "ACTION REQUIRED")]
+
+
+def test_company_filter_message_is_plain():
+    from shared.friendly_errors import friendly
+
+    text = friendly(ValueError('Expected one Company filter on individual forecast tab "Monthly Forecast".'))
+    assert '"Monthly Forecast"' in text and "not validated" in text
+
+
+def test_grand_total_found_on_a_tab_without_a_company_column():
+    # Live run: ALIV Head Office's tab starts with "GL Account Mapping".
+    rows = [{"GL Account Mapping": "Salaries", "Grand Total": "10"},
+            {"GL Account Mapping": "Grand Total", "Grand Total": "1,234"}]
+    assert vs.get_individual_tableau_grand_total(rows) == 1234
+
+
+def _sheet_with_totals(path, values_by_row, extra_total=None):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ALIV"
+    months = [datetime(2026 if m >= 7 else 2027, m, 1) for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)]
+    ws.append(["Forecast Type", "GL Account", *months, "Grand Total"])
+    for i, values in enumerate(values_by_row, start=2):
+        ws.append(["FY27 Forecast_102026", f"60{i}", *values, f"=SUM(C{i}:N{i})"])
+    end = 1 + len(values_by_row)
+    total = [None, None, *[f"=SUM({c}2:{c}{end})" for c in "CDEFGHIJKLMN"],
+             extra_total or f"=SUM(O2:O{end})"]
+    ws.append(total)
+    wb.save(path)
+    return path
+
+
+def test_excel_grand_total_is_the_sheets_own_total_cell(tmp_path):
+    path = _sheet_with_totals(tmp_path / "w.xlsx", [[100] * 12, [-50, *[None] * 11]])
+    assert vs.get_excel_forecast_grand_total(path, "ALIV") == 1150
+    # A total cell with its own formula is followed exactly (here: minus a fixed 150).
+    path = _sheet_with_totals(tmp_path / "x.xlsx", [[100] * 12], extra_total="=SUM(O2:O2)-150")
+    assert vs.get_excel_forecast_grand_total(path, "ALIV") == 1050
+
+
+def test_unsupported_total_formula_is_explained(tmp_path):
+    import pytest
+
+    from shared.friendly_errors import PlainLanguageError
+
+    path = _sheet_with_totals(tmp_path / "w.xlsx", [[1] * 12], extra_total="=SUMIF(A2:A2,\"x\",O2:O2)")
+    with pytest.raises(PlainLanguageError, match="Open the workbook in Excel, save it"):
+        vs.get_excel_forecast_grand_total(path, "ALIV")
+
+
+def test_tolerance_is_1000_dollars():
+    assert vs.compare_forecast_totals(10_000, 9_000.5)["status"] == "PASS"
+    assert vs.compare_forecast_totals(10_000, 8_999)["status"] == "FAIL"
+
+
+def test_needs_filter_lines_are_reported_not_skipped(tmp_path, monkeypatch):
+    route = {"category": "OPEX", "workbook": "FY27 OPEX Engineering & Technology_Aug Forecast.xlsx",
+             "excel_sheet": "Tech Ops - ALIV", "individual_tableau_folder": str(tmp_path),
+             "individual_tableau_workbook": "Engineering.twb",
+             "individual_tableau_worksheet": "GROUP Monthly Forecast by Sup Department",
+             "validation_status": "needs_filter", "validation_filter_note": "Technical Operations subdepartment"}
+    opened = []
+    monkeypatch.setattr(ts, "open_tableau_workbook", lambda tableau_workbook_path: opened.append(1))
+    result = vs.run_grouped_individual_validation([route], tmp_path, "Oct", 10, 2026)
+    (item,) = result["results"]
+    assert item["status"] == "NOT VALIDATED" and item["category"] == "OPEX"
+    assert "Technical Operations subdepartment filter" in item["note"]
+    assert opened == []
+
+
+def test_tableau_forecast_type_is_checked_and_tidied():
+    import pytest
+
+    from shared.friendly_errors import PlainLanguageError
+
+    assert service.check_tableau_forecast_type(" fy27  forecast_092026 ", "FY27") == "FY27 Forecast_092026"
+    with pytest.raises(PlainLanguageError, match="for example FY27 Forecast_102026"):
+        service.check_tableau_forecast_type("Forecast Oct", "FY27")
+
+
+def test_step_3_uses_the_chosen_tableau_forecast_type(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(**kwargs):
+        seen["forecast_type"] = kwargs["forecast_type"]
+        return {"results": [], "workbooks": [], "passed": 0, "failed": 0, "action_required": 0,
+                "status": "PASS"}
+
+    monkeypatch.setattr(service, "run_grouped_individual_validation", fake_run)
+    monkeypatch.setattr(service, "get_forecast_validation_output_folder", lambda **k: tmp_path)
+    result = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["OPEX"],
+                                               tableau_forecast_type="FY27 Forecast_092026")
+    assert seen["forecast_type"] == "FY27 Forecast_092026"
+    summary = {row[0]: row[1] for row in load_workbook(result["validation_report"])["Validation Summary"]
+               .iter_rows(values_only=True)}
+    assert summary["Forecast Type"] == "FY27 Forecast_092026" and summary["Tolerance"] == 1000
+
+
+def test_report_goes_to_the_teams_validation_results_folder(tmp_path, monkeypatch):
+    from shared import settings
+
+    root = tmp_path / "Financial Planning & Analysis-Validation Results - Documents"
+    root.mkdir()
+    real = settings.get_path
+    monkeypatch.setattr(settings, "get_path",
+                        lambda key: root if key == "shared_output_root" else (None if key.endswith("_root") else real(key)))
+    monkeypatch.setattr(service, "run_grouped_individual_validation",
+                        lambda **k: {"results": [], "workbooks": [], "passed": 0, "failed": 0,
+                                     "action_required": 0, "status": "PASS"})
+    result = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["OPEX"])
+    assert result["validation_report"] == str(
+        root / "FY27" / "2026-10 - October" / "Forecast Validation" / "Forecast_Validation_Oct_2026.xlsx")
+
+
+def test_step3_message_says_what_to_review_and_where_the_report_is():
+    from ui.forecast_messages import step3_message
+
+    report = r"C:\...\Forecast Validation\Forecast_Validation_Oct_2026.xlsx"
+    attention, text = step3_message("OPEX", {"validation_report": report, "results": [
+        {"category": "OPEX", "status": "PASS", "forecast_workbook": "FY27 OPEX Legal_Oct Forecast.xlsx", "worksheet": "ALIV"},
+        {"category": "OPEX", "status": "FAIL", "forecast_workbook": "FY27 OPEX HR_Oct Forecast.xlsx", "worksheet": "CBL",
+         "excel_grand_total": 125000, "tableau_grand_total": 120500, "variance": 4500},
+        {"category": "OPEX", "status": "ACTION REQUIRED", "forecast_workbook": "FY27 OPEX IT_Oct Forecast.xlsx",
+         "worksheet": "ALIV", "note": "Tableau did not open in time."},
+        {"category": "OPEX", "status": "NOT VALIDATED", "forecast_workbook": "FY27 OPEX Eng_Oct Forecast.xlsx",
+         "worksheet": "Tech Ops - ALIV"},
+    ]})
+    assert attention
+    assert text.startswith("OPEX: 1 of 3 checked sheets match Tableau (within $1,000).")
+    assert "1. FY27 OPEX HR / CBL\n    Excel 125,000 vs Tableau 120,500 - off by 4,500" in text
+    assert "2. FY27 OPEX IT / ALIV\n    Not checked: Tableau did not open in time." in text
+    assert "1 sheet(s) are not checked automatically yet" in text
+    assert f"Validation report: {report}" in text
+
+
+def test_step3_message_all_matched_is_information():
+    from ui.forecast_messages import step3_message
+
+    attention, text = step3_message("Revenue", {"results": [{"category": "Revenue", "status": "PASS"}] * 6})
+    assert not attention and text.startswith("Revenue: all 6 checked sheets match Tableau")
+
+
+def test_grand_total_label_in_another_column():
+    # Mobile Consumer SAC: the tab has a Company column, but the label sits in
+    # its first column (Bus Code Name) and Company is blank on that row.
+    rows = [{"Bus Code Name": "SAC", "Company": "ALIV", "Grand Total": "10"},
+            {"Bus Code Name": "Grand Total", "Company": None, "Grand Total": "(2,500)"}]
+    assert vs.get_individual_tableau_grand_total(rows) == -2500
+
+
+def test_group_tab_gets_the_lines_company(tmp_path):
+    source = tmp_path / "Below the Line.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    out = tmp_path / "copy.twb"
+    vs._prepare_individual_forecast_copy(
+        source=source, destination=out, tab="Monthly Forecast", company="CBL",
+        forecast_start=date(2026, 10, 1), forecast_type="FY27 Forecast_102026", filter_company=True,
+    )
+    members = [g.get("member") for g in ET.parse(out).getroot().iter("groupfilter")
+               if g.get("function") == "member"]
+    assert '"CBL"' in members and '"ALIV"' not in members
+
+
+def test_step_3_works_in_the_source_workbook_without_copies(tmp_path, monkeypatch):
+    seen = []
+
+    def fake_prepare(**kwargs):
+        seen.append((kwargs["source"], kwargs["destination"]))
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(vs, "_prepare_individual_forecast_copy", fake_prepare)
+    route = {"category": "Other", "individual_tableau_folder": str(tmp_path), "validation_status": "confirmed",
+             "workbook": "FY27 X_Aug Forecast.xlsx", "excel_sheet": "S", "company_filter": "CBL",
+             "individual_tableau_workbook": "BTL.twb", "individual_tableau_worksheet": "Group BTL"}
+    vs.run_grouped_individual_validation([route], tmp_path, "Oct", 10, 2026)
+    assert seen == [(tmp_path / "BTL.twb", tmp_path / "BTL.twb")]
+    assert list(tmp_path.iterdir()) == []          # nothing copied or left behind
+
+
+MONTHS = ["Jul-26", "Aug-26"]
+
+
+def _row(*labels, total):
+    keys = ["Company", "GL Account Mapping", "GL Sub Segment code"]
+    return {**dict(zip(keys, labels)), **{m: "" for m in MONTHS}, "Grand Total": total}
+
+
+def test_group_tab_uses_the_companys_subtotal_row():
+    rows = [_row("ALIV", "DEPRECIATION", "900001", total="10"),
+            _row("ALIV", "Total", "Total", total="39,622,161"),
+            _row("CBL", "DEPRECIATION", "900001", total="20"),
+            _row("CBL", "Total", "Total", total="51,006,161"),
+            _row("Grand Total", "Total", "Total", total="90,628,322")]
+    assert vs.get_individual_tableau_grand_total(rows, company="ALIV") == 39_622_161
+    assert vs.get_individual_tableau_grand_total(rows, company="CBL") == 51_006_161
+    assert vs.get_individual_tableau_grand_total(rows) == 90_628_322
+
+
+def test_single_company_tab_still_uses_its_grand_total():
+    rows = [_row("ALIV", "X", "1", total="5"), _row("ALIV", "Total", "Total", total="5"),
+            _row("Grand Total", "Total", "Total", total="5")]
+    assert vs.get_individual_tableau_grand_total(rows, company="ALIV") == 5
+
+
+def test_one_top_level_group_without_grand_total_uses_its_subtotal():
+    # ALIV Consumer SAC: only CONSUMER is shown, so Tableau has no Grand Total row.
+    rows = [{"GL FS Revenue by Type": "CONSUMER", "GL FS Type": "DEVICE COST", "GL Sub Segment code": "500001",
+             "Jul-26": "1", "Grand Total": "8,202,848"},
+            {"GL FS Revenue by Type": "CONSUMER", "GL FS Type": "Total", "GL Sub Segment code": "Total",
+             "Jul-26": "1", "Grand Total": "2,118,104"}]
+    assert vs.get_individual_tableau_grand_total(rows, company="ALIV") == 2_118_104
+
+
+def test_part_of_a_tab_is_summed_with_the_consolidated_exclusions():
+    rows = [{"GL Account Mapping": "OTHER CHARGES", "GL Sub Account Description": "OTHER CHARGES", "Grand Total": "60,000"},
+            {"GL Account Mapping": "DEVICE COST", "GL Sub Account Description": "PREPAID ACQUISITION", "Grand Total": "25,000"},
+            {"GL Account Mapping": "INVENTORY SAC PROVISION", "GL Sub Account Description": "INVENTORY SAC PROVISION", "Grand Total": "24,137"},
+            {"GL Account Mapping": "Total", "GL Sub Account Description": "Total", "Grand Total": "109,137"}]
+    total = vs.get_individual_tableau_grand_total(
+        rows, exclude={"GL Sub Account Description": ["PREPAID ACQUISITION"]})
+    assert total == 84_137
+
+
+def test_report_shows_when_it_was_updated_and_warns_about_onedrive_copies(tmp_path, monkeypatch):
+    from shared.forecast_validation_report import write_forecast_validation_report
+    from ui.forecast_messages import step3_message
+
+    monkeypatch.setattr(service, "run_grouped_individual_validation",
+                        lambda **k: {"results": [{"category": "OPEX", "status": "PASS"}], "workbooks": [],
+                                     "passed": 1, "failed": 0, "action_required": 0, "status": "PASS"})
+    monkeypatch.setattr(service, "get_forecast_validation_output_folder", lambda **k: tmp_path)
+    (tmp_path / "Forecast_Validation_Oct_2026-MONCLOUD-PC.xlsx").write_bytes(b"conflict")
+    result = service.validate_monthly_forecast(tmp_path, "FY27", 10, 2026, categories=["OPEX"])
+    report = load_workbook(result["validation_report"])
+    summary = {row[0]: row[1] for row in report["Validation Summary"].iter_rows(values_only=True)}
+    assert summary["Last Updated"]
+    detail = report["Validation Detail"]
+    header = [c.value for c in detail[1]]
+    assert detail.cell(2, header.index("Validated At") + 1).value == summary["Last Updated"]
+    assert result["conflict_copies"] == ["Forecast_Validation_Oct_2026-MONCLOUD-PC.xlsx"]
+    _, text = step3_message("OPEX", result)
+    assert "OneDrive also has another copy" in text and "Last Updated" in text
+
+
+def test_report_open_elsewhere_is_explained(tmp_path, monkeypatch):
+    import pytest
+
+    from shared import forecast_validation_report as fvr
+    from shared.friendly_errors import PlainLanguageError
+
+    def locked(src, dst):
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(fvr.os, "replace", locked)
+    with pytest.raises(PlainLanguageError, match="is open"):
+        fvr.write_forecast_validation_report({"results": []}, tmp_path, "FY27", 10, 2026, "FY27 Forecast_102026")
+    assert [p.name for p in tmp_path.iterdir()] == []
+
+
+def test_forecast_start_is_a_date_in_the_report(tmp_path):
+    from shared.forecast_validation_report import write_forecast_validation_report
+
+    path = write_forecast_validation_report(
+        {"results": [{"status": "PASS", "forecast_start": "#2026-09-01#", "category": "Other"}]},
+        tmp_path, "FY27", 10, 2026, "FY27 Forecast_092026")
+    detail = load_workbook(path)["Validation Detail"]
+    header = [c.value for c in detail[1]]
+    cell = detail.cell(2, header.index("Forecast Start") + 1)
+    assert cell.value == datetime(2026, 9, 1) and cell.number_format == "mm/dd/yyyy"
+
+
+def test_total_row_with_a_total_label_is_the_total_row(tmp_path):
+    # HR's template puts "Total" in the description column of its total row.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "ALIV"
+    months = [datetime(2026 if m >= 7 else 2027, m, 1) for m in (7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6)]
+    ws.append(["Forecast Type", "GL Sub Segment code", "GL Sub Account Description", *months, "Grand Total"])
+    ws.append(["FY27 Forecast_102026", "600021", "PAYROLL", *[100] * 12, "=SUM(D2:O2)"])
+    ws.append(["FY27 Forecast_102026", "610004", "RECRUITMENT", *[1] * 12, "=SUM(D3:O3)"])
+    ws.append([None, None, "Total", *[f"=SUM({c}2:{c}3)" for c in "DEFGHIJKLMNOP"]])
+    path = tmp_path / "FY27 OPEX Human Resources_Oct Forecast.xlsx"
+    wb.save(path)
+    assert vs.get_excel_forecast_grand_total(path, "ALIV") == 1212
+
+
+def test_only_the_sheets_lines_are_summed_from_a_shared_tab():
+    rows = [{"Company": "ALIV", "GL FS Category": "MARKETING", "Grand Total": "1,000"},
+            {"Company": "ALIV", "GL FS Category": "FACILITIES", "Grand Total": "250"},
+            {"Company": "ALIV", "GL FS Category": "Total", "Grand Total": "1,250"},
+            {"Company": "CBL", "GL FS Category": "MARKETING", "Grand Total": "400"},
+            {"Company": "CBL", "GL FS Category": "Total", "Grand Total": "400"},
+            {"Company": "Grand Total", "GL FS Category": "Total", "Grand Total": "1,650"}]
+    pick = lambda **include: vs.get_individual_tableau_grand_total(rows, include=include)
+    assert pick(Company=["ALIV"], **{"GL FS Category": ["MARKETING"]}) == 1_000
+    assert pick(**{"GL FS Category": ["MARKETING"]}) == 1_400
+    assert vs.get_individual_tableau_grand_total(
+        rows, include={"Company": ["ALIV"]}, exclude={"GL FS Category": ["FACILITIES"]}) == 1_000
+
+
+def test_no_matching_lines_is_explained_in_plain_words():
+    rows = [{"Company": "ALIV", "GL FS Category": "MARKETING", "Grand Total": "1,000"}]
+    try:
+        vs.get_individual_tableau_grand_total(rows, include={"Company": ["CBL"]})
+    except vs.PlainLanguageError as error:
+        assert "No lines in the individual Tableau tab" in str(error)
+    else:
+        raise AssertionError("expected a plain-language error")
+
+
+def test_selections_apply_to_existing_lines_and_leave_other_alone():
+    from automations.forecast.individual_selections import SELECTIONS
+    from automations.forecast.mapping import FORECAST_ROUTES
+
+    keys = {(route["workbook"].rsplit("_", 1)[0], route["excel_sheet"]) for route in FORECAST_ROUTES}
+    assert set(SELECTIONS) <= keys
+    for route in FORECAST_ROUTES:
+        if route["category"] == "Other":
+            assert "individual_include" not in route
+    assert not [r for r in FORECAST_ROUTES
+                if r["category"] in ("OPEX", "Direct Cost") and r.get("validation_status") != "confirmed"]
+
+
+FORECAST_MEASURE_WORKBOOK = """<?xml version='1.0' encoding='utf-8' ?>
+<workbook>
+  <datasources><datasource name='Parameters'>
+    <column caption='Forecast Start' name='[Parameter 1 1]' param-domain-type='list' value='#2026-08-01#'>
+      <calculation class='tableau' formula='#2026-08-01#' /></column>
+    <column caption='Forecast Measure' name='[Parameter 2]' param-domain-type='list' value='"Budget"'>
+      <calculation class='tableau' formula='"Budget"' /></column>
+  </datasource></datasources>
+  <shared-views><shared-view name='sqlproxy.abc'>
+    <filter class='categorical' column='[sqlproxy.abc].[none:Forecast Type:nk]'>
+      <groupfilter function='union'>
+        <groupfilter function='member' level='[none:Forecast Type:nk]' member='"FY27 Forecast_092026"' />
+        <groupfilter function='member' level='[none:Forecast Type:nk]' member='"Non Forecast"' />
+      </groupfilter>
+    </filter>
+  </shared-view></shared-views>
+  <worksheets><worksheet name='Group Direct Cost Forecast'><table><view>
+    <datasources><datasource name='sqlproxy.abc' /><datasource name='Parameters' /></datasources>
+    <datasource-dependencies datasource='Parameters'>
+      <column caption='Forecast Start' name='[Parameter 1 1]' />
+      <column caption='Forecast Measure' name='[Parameter 2]' />
+    </datasource-dependencies>
+    <datasource-dependencies datasource='sqlproxy.abc'>
+      <column caption='Annual Forecast' name='[Calculation_1]'>
+        <calculation class='tableau' formula="IF [Parameters].[Parameter 2] = 'Forecast' THEN [Forecast] END" />
+      </column>
+    </datasource-dependencies>
+  </view></table></worksheet></worksheets>
+</workbook>
+"""
+
+
+def test_forecast_type_set_for_every_tab_on_the_data_source_is_updated(tmp_path):
+    # Most OPEX and Direct Cost workbooks keep Forecast Type as a filter
+    # applied to all tabs using the data source, not on the tab itself.
+    source = tmp_path / "Direct Costs_Internet Bandwidth_Aliv Business.twb"
+    source.write_text(FORECAST_MEASURE_WORKBOOK, encoding="utf-8")
+    prepared = vs._prepare_individual_forecast_copy(
+        source=source, destination=source, tab="Group Direct Cost Forecast", company="CBL",
+        forecast_start=date(2026, 10, 1), forecast_type="FY27 Forecast_102026",
+    )
+    text = source.read_text(encoding="utf-8")
+    assert "FY27 Forecast_102026" in text and "FY27 Forecast_092026" not in text
+    assert "Non Forecast" in text
+    assert prepared["period_mode"] == "Forecast Measure + Forecast Type"
+
+
+def test_tab_without_a_grand_total_row_sums_its_lines():
+    # CBL Content Fees_Media: Grand Totals for rows are off and there are no subtotals.
+    rows = [{"GL Account Mapping": "CONTENT FEES", "GL Sub Account Description": "A", "Grand Total": "1,000"},
+            {"GL Account Mapping": "CONTENT FEES", "GL Sub Account Description": "B", "Grand Total": "234"}]
+    assert vs.get_individual_tableau_grand_total(rows, company="CBL") == 1_234
+
+
+def test_report_has_no_period_mode_column(tmp_path):
+    from shared.forecast_validation_report import write_forecast_validation_report
+    import inspect
+    assert "Period Mode" not in inspect.getsource(write_forecast_validation_report)
+
+
+def test_status_panel_shows_one_runs_figures():
+    from ui.forecast_messages import status_tiles
+    result = {"results": [
+        {"category": "Revenue", "forecast_workbook": "A.xlsx", "status": "PASS"},
+        {"category": "Revenue", "forecast_workbook": "A.xlsx", "status": "FAIL"},
+        {"category": "Revenue", "forecast_workbook": "B.xlsx", "status": "NOT VALIDATED"},
+        {"category": "OPEX", "forecast_workbook": "C.xlsx", "status": "PASS"}]}
+    tiles, title, text = status_tiles(3, "Revenue", result)
+    assert tiles == {"workbooks": 2, "sheets": 3, "passed": 1, "failed": 1, "action": 0}
+    assert title == "Revenue: Review Required" and "1 not checked" in text
+    tiles, title, _ = status_tiles(2, "OPEX", {"passed": [{}] * 37, "failed": [], "workbooks_updated": 20})
+    assert tiles["sheets"] == 37 and tiles["passed"] == "-" and title == "OPEX workbooks updated"
+
+
+def test_tab_names_match_ignoring_extra_spaces(tmp_path):
+    source = tmp_path / "Legal.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    prepared = vs._prepare_individual_forecast_copy(
+        source=source, destination=source, tab="Monthly  Forecast ", company="CBL",
+        forecast_start=date(2026, 10, 1), forecast_type="FY27 Forecast_102026",
+    )
+    assert prepared["worksheet"] == "Monthly Forecast"
+
+
+def test_a_tab_tableau_could_not_open_is_tried_once_more(tmp_path, monkeypatch):
+    from automations.forecast import tableau_service
+    calls = []
+
+    def copy_rows(worksheet_name, **_):
+        calls.append(worksheet_name)
+        if len(calls) == 1:
+            raise RuntimeError(f'Tableau worksheet "{worksheet_name}" could not be selected after 3 attempts.')
+        return [{"Company": "Grand Total", "Grand Total": "5"}]
+
+    source = tmp_path / "Legal.twb"
+    source.write_text(FORECAST_TYPE_TAB, encoding="utf-8")
+    monkeypatch.setattr(tableau_service, "open_tableau_workbook", lambda **_: None)
+    monkeypatch.setattr(tableau_service, "get_tableau_crosstab_rows", copy_rows)
+    monkeypatch.setattr(vs, "close_individual_tableau_workbook", lambda *_: {"closed": True})
+    monkeypatch.setattr(vs, "validate_route_from_tableau_rows",
+                        lambda route, tableau_rows, **_: {"status": "PASS", "tableau_rows": tableau_rows})
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda *_: None)
+    route = {"category": "OPEX", "workbook": "FY27 OPEX Legal_Aug Forecast.xlsx", "excel_sheet": "CBL",
+             "individual_tableau_folder": str(tmp_path), "individual_tableau_workbook": "Legal.twb",
+             "individual_tableau_worksheet": "Monthly Forecast", "validation_status": "confirmed"}
+    out = vs.run_grouped_individual_validation(
+        routes=[route], forecast_folder=tmp_path, target_month_abbr="Oct", forecast_month=10,
+        forecast_year=2026, open_wait_seconds=0, forecast_start=date(2026, 10, 1),
+        forecast_type="FY27 Forecast_102026")
+    assert len(calls) == 2 and out["results"][0]["status"] == "PASS"

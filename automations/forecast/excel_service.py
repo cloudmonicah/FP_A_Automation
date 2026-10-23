@@ -6,8 +6,10 @@ from typing import Any
 from copy import copy
 from datetime import datetime
 import calendar
+import os
 import re
 import shutil
+import zipfile
 
 from openpyxl import load_workbook
 from openpyxl.styles import Border, Side
@@ -56,6 +58,53 @@ MONTH_NUMBER_BY_ABBR = {
 # ============================================================
 # GENERAL HELPERS
 # ============================================================
+
+
+# openpyxl can only open these; .xls and .xlsb files have to be resaved first.
+EDITABLE_SUFFIXES = {".xlsx", ".xlsm"}
+
+
+def open_workbook_for_edit(workbook_path: str | Path):
+    """Open a workbook to change it, keeping the macros of a .xlsm file."""
+    workbook_path = Path(workbook_path)
+    if workbook_path.suffix.lower() not in EDITABLE_SUFFIXES:
+        raise PlainLanguageError(
+            f'"{workbook_path.name}" is an {workbook_path.suffix} file, which the app '
+            "can't update. Open it in Excel, save it as .xlsx (or .xlsm if it has "
+            "macros), then run again."
+        )
+    return load_workbook(
+        workbook_path,
+        data_only=False,
+        keep_vba=workbook_path.suffix.lower() == ".xlsm",
+    )
+
+
+def close_workbook(workbook) -> None:
+    """Close a workbook, including the macro file a .xlsm keeps open.
+
+    openpyxl leaves that file open after close(); on Windows the open file
+    then stops the workbook from being moved or replaced.
+    """
+    try:
+        workbook.close()
+    finally:
+        archive = getattr(workbook, "vba_archive", None)
+        if archive is not None:
+            archive.close()
+
+
+def chart_count(workbook_path: str | Path) -> int:
+    """Charts in the file. openpyxl drops charts when it saves a workbook."""
+    try:
+        with zipfile.ZipFile(workbook_path) as archive:
+            return sum(
+                1
+                for name in archive.namelist()
+                if name.startswith("xl/charts/chart") and name.endswith(".xml")
+            )
+    except (zipfile.BadZipFile, OSError):
+        return 0
 
 
 def normalize_text(value: Any) -> str:
@@ -217,24 +266,24 @@ def find_latest_unique_forecast_workbooks(
 def find_header(
     worksheet,
     names: set[str],
+    max_rows: int = 200,
 ) -> tuple[int | None, int | None]:
+    """Find the first cell whose text is one of ``names``.
 
-    for row_index in range(
-        1,
-        worksheet.max_row + 1,
+    Only the top ``max_rows`` rows are searched: headers sit near the top, and
+    sheets with formatting down to row 1,048,576 would otherwise take minutes.
+    """
+
+    for row_index, row in enumerate(
+        worksheet.iter_rows(
+            min_row=1,
+            max_row=min(worksheet.max_row, max_rows),
+            values_only=True,
+        ),
+        start=1,
     ):
-        for column_index in range(
-            1,
-            worksheet.max_column + 1,
-        ):
-            value = normalize_text(
-                worksheet.cell(
-                    row=row_index,
-                    column=column_index,
-                ).value
-            )
-
-            if value in names:
+        for column_index, value in enumerate(row, start=1):
+            if normalize_text(value) in names:
                 return row_index, column_index
 
     return None, None
@@ -243,6 +292,15 @@ def find_header(
 # ============================================================
 # FORECAST TYPE
 # ============================================================
+
+
+def forecast_type_for(fiscal_year: str, forecast_month: int, forecast_year: int) -> str:
+    """The Forecast Type a month's run uses: the selected month itself.
+
+    October 2026 -> "FY27 Forecast_102026"; January 2027 -> "FY27 Forecast_012027".
+    Forecast Start is separate (an editable date) and does not change this.
+    """
+    return f"{fiscal_year} Forecast_{forecast_month:02d}{forecast_year}"
 
 
 def update_forecast_workbook(
@@ -263,14 +321,9 @@ def update_forecast_workbook(
 
     workbook_path = Path(workbook_path)
 
-    workbook = load_workbook(
-        workbook_path,
-        data_only=False,
-    )
+    workbook = open_workbook_for_edit(workbook_path)
 
-    forecast_type_value = (
-        f"{target_fiscal_year} Forecast_" f"{forecast_month:02d}" f"{forecast_year}"
-    )
+    forecast_type_value = forecast_type_for(target_fiscal_year, forecast_month, forecast_year)
 
     worksheets_updated = 0
     forecast_values_updated = 0
@@ -321,7 +374,7 @@ def update_forecast_workbook(
         workbook.save(workbook_path)
 
     finally:
-        workbook.close()
+        close_workbook(workbook)
 
     return {
         "worksheets_updated": worksheets_updated,
@@ -345,10 +398,7 @@ def get_formula_cells(
 
     workbook_path = Path(workbook_path)
 
-    workbook = load_workbook(
-        workbook_path,
-        data_only=False,
-    )
+    workbook = open_workbook_for_edit(workbook_path)
 
     formulas: dict[str, dict[str, str]] = {}
 
@@ -368,7 +418,7 @@ def get_formula_cells(
             formulas[worksheet.title] = sheet_formulas
 
     finally:
-        workbook.close()
+        close_workbook(workbook)
 
     return formulas
 
@@ -519,6 +569,7 @@ def create_forecast_refresh(
     formula_audits: list[dict] = []
     sources_used: list[dict] = []
     older_sources: list[dict] = []
+    warnings: list[dict] = []
 
     worksheets_updated = 0
     forecast_values_updated = 0
@@ -535,55 +586,45 @@ def create_forecast_refresh(
 
         destination = output_path / new_filename
 
+        # Each workbook is built in a temporary file next to its final name and
+        # only moved into place once it is complete. A failure part-way through
+        # leaves no half-made file behind (which "skip" would later keep), and
+        # "replace" keeps last run's file until the new one is ready.
+        building = destination.with_name(f"~building {destination.name}")
+
         try:
 
-            if destination.exists():
+            if destination.exists() and overwrite_mode == "skip":
 
-                if overwrite_mode == "skip":
+                skipped.append(destination)
 
-                    skipped.append(destination)
+                sources_used.append(
+                    {
+                        "family": family,
+                        "source_file": source_file,
+                        "source_month": source_month_abbr,
+                        "destination": destination,
+                        "status": "skipped",
+                    }
+                )
 
-                    sources_used.append(
-                        {
-                            "family": family,
-                            "source_file": source_file,
-                            "source_month": source_month_abbr,
-                            "destination": destination,
-                            "status": "skipped",
-                        }
-                    )
-
-                    continue
-
-                if overwrite_mode == "cancel":
-                    raise RuntimeError(
-                        "Forecast file already exists: " f"{destination.name}"
-                    )
-
-                if overwrite_mode == "replace":
-                    destination.unlink()
+                continue
 
             # ----------------------------------------------
-            # Capture formulas before copying.
+            # Capture formulas and charts before copying.
             # ----------------------------------------------
 
             source_formulas = get_formula_cells(source_file)
+            source_charts = chart_count(source_file)
 
             # ----------------------------------------------
-            # Create new monthly workbook.
+            # Build the new monthly workbook.
             # ----------------------------------------------
 
-            shutil.copy2(
-                source_file,
-                destination,
-            )
-
-            # ----------------------------------------------
-            # Update Forecast Type.
-            # ----------------------------------------------
+            shutil.copy2(source_file, building)
 
             result = update_forecast_workbook(
-                workbook_path=destination,
+                workbook_path=building,
                 target_fiscal_year=fiscal_year,
                 forecast_month=forecast_month,
                 forecast_year=forecast_year,
@@ -593,12 +634,36 @@ def create_forecast_refresh(
             # Confirm formulas survived the creation step.
             # ----------------------------------------------
 
-            destination_formulas = get_formula_cells(destination)
+            destination_formulas = get_formula_cells(building)
 
             formula_audit = compare_formula_preservation(
                 source_formulas=source_formulas,
                 destination_formulas=destination_formulas,
             )
+            charts_lost = source_charts - chart_count(building)
+            print(
+                f"Formula check {destination.name}: "
+                f"{formula_audit['source_formula_count']} before, "
+                f"{formula_audit['destination_formula_count']} after, "
+                f"{formula_audit['missing_formula_count']} missing, "
+                f"{formula_audit['changed_formula_count']} changed",
+                flush=True,
+            )
+            for item in (formula_audit["missing_formulas"] + formula_audit["changed_formulas"])[:20]:
+                print(f"  {item['sheet']}!{item['cell']}: {item}", flush=True)
+
+            # ----------------------------------------------
+            # Put it in place. Fails (and keeps the old file)
+            # if the destination is open in Excel.
+            # ----------------------------------------------
+
+            try:
+                os.replace(building, destination)
+            except PermissionError as exc:
+                raise PlainLanguageError(
+                    f'"{destination.name}" is open (in Excel or another program), so it '
+                    "could not be replaced. Close it and run again."
+                ) from exc
 
             formula_audits.append(
                 {
@@ -606,9 +671,23 @@ def create_forecast_refresh(
                     "source_file": source_file.name,
                     "source_month": source_month_abbr,
                     "target_month": target_month_abbr,
+                    "charts_lost": max(charts_lost, 0),
                     **formula_audit,
                 }
             )
+
+            problems = []
+            if not formula_audit["formulas_preserved"]:
+                problems.append(
+                    f"{formula_audit['missing_formula_count'] + formula_audit['changed_formula_count']} "
+                    "formula(s) are missing or changed"
+                )
+            if charts_lost > 0:
+                problems.append(f"{charts_lost} chart(s) were not kept")
+            if result["forecast_values_updated"] == 0:
+                problems.append("no Forecast Type cells were found to update")
+            if problems:
+                warnings.append({"file": destination.name, "problems": problems})
 
             worksheets_updated += result["worksheets_updated"]
 
@@ -646,6 +725,12 @@ def create_forecast_refresh(
                 }
             )
 
+        finally:
+            try:
+                building.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     return {
         "files_created": len(created),
         "files_skipped": len(skipped),
@@ -661,6 +746,7 @@ def create_forecast_refresh(
         "failures": failed,
         "sources_used": sources_used,
         "older_sources": older_sources,
+        "warnings": warnings,
         "formula_audits": formula_audits,
     }
 
@@ -784,7 +870,10 @@ def _s4_tableau_months(rows: list[dict]) -> dict[int, Any]:
 def _s4_structure(ws) -> dict:
     header_row, forecast_col = find_header(ws, {"forecast type"})
     if header_row is None or forecast_col is None:
-        raise RuntimeError(f'Forecast Type header not found in "{ws.title}".')
+        raise PlainLanguageError(
+            f'The "{ws.title}" tab has no "Forecast Type" column heading in its top rows, '
+            "so the app can't find where the data starts. Check the tab's heading row."
+        )
 
     headers = {}
     for col in range(1, ws.max_column + 1):
@@ -814,9 +903,9 @@ def _s4_structure(ws) -> dict:
 
     missing = [MONTH_ABBR[m] for m in FISCAL_MONTH_ORDER if m not in month_cols]
     if missing:
-        raise RuntimeError(
-            f'"{ws.title}" does not contain a complete Jul-Jun block. '
-            f'Missing: {", ".join(missing)}'
+        raise PlainLanguageError(
+            f'The "{ws.title}" tab is missing month columns for {", ".join(missing)}. '
+            "It needs one column for each month, July to June, in the heading row."
         )
 
     desc_cols = {}
@@ -832,7 +921,10 @@ def _s4_structure(ws) -> dict:
             total_col = col
             break
     if total_col is None:
-        raise RuntimeError(f'Grand Total column not found in "{ws.title}".')
+        raise PlainLanguageError(
+            f'The "{ws.title}" tab has no "Grand Total" column heading. Add it back '
+            "(next to June) and run again."
+        )
 
     return {
         "header_row": header_row,
@@ -1109,6 +1201,77 @@ def _tableau_month_columns(rows: list[dict], fiscal_year: str) -> dict[int, Any]
     return found
 
 
+def _row_key(ws, row: int, key_cols: list[int]) -> tuple:
+    """Which account a line is, from the account columns Tableau fills."""
+    return tuple(_s4norm(ws.cell(row, col).value) for col in key_cols)
+
+
+def _account_key_columns(structure: dict, pasted_cols) -> list[int]:
+    """Business code, company, sub segment and description - those Tableau fills."""
+    cols = structure["descriptive_columns"]
+    return [
+        cols[field]
+        for field in ("business_code", "company", "sub_segment", "description")
+        if field in cols and cols[field] in set(pasted_cols)
+    ]
+
+
+def _detail_range(ws, structure: dict) -> tuple[int, int, int | None]:
+    """(first line, last line, total row) of the sheet's data block.
+
+    A line is a row with a Forecast Type or any account detail (some lines have
+    a blank Forecast Type). The total row is the next row with a SUM formula in
+    a month column; it may sit a row or two below the last line.
+    """
+    first = structure["header_row"] + 1
+    marker_cols = {structure["forecast_type_column"], *structure["descriptive_columns"].values()}
+    month_cols = list(structure["month_columns"].values())
+    last = first - 1
+    total_row = None
+    for row in range(first, ws.max_row + 1):
+        markers = [ws.cell(row, col).value for col in marker_cols]
+        sums = any(
+            isinstance(ws.cell(row, col).value, str) and ws.cell(row, col).value.upper().startswith("=SUM(")
+            for col in month_cols
+        )
+        # A total row may carry a "Total" label (HR's template does): SUMs in
+        # the months and no other text means it is the total, not a line.
+        labelled_total = sums and all(
+            value in (None, "") or _s4norm(value) in {"total", "grand total"} for value in markers
+        ) and any(_s4norm(value) in {"total", "grand total"} for value in markers)
+        if labelled_total:
+            if total_row is None:
+                total_row = row
+            continue
+        if any(value not in (None, "") for value in markers):
+            last = row
+            total_row = None
+            continue
+        if total_row is None and any(
+            isinstance(ws.cell(row, col).value, str) and ws.cell(row, col).value.upper().startswith("=SUM(")
+            for col in month_cols
+        ):
+            total_row = row
+    if total_row is not None and total_row - last > 3:
+        total_row = None  # too far below to be this block's total
+    return first, last, total_row
+
+
+def _number_format_for_amounts(ws, structure: dict, first: int, last: int) -> str:
+    """The sheet's usual (non-date) number format for month amounts."""
+    from collections import Counter
+    from openpyxl.styles.numbers import is_date_format
+
+    counts = Counter(
+        ws.cell(row, col).number_format
+        for row in range(first, last + 1)
+        for col in structure["month_columns"].values()
+        if not is_date_format(ws.cell(row, col).number_format)
+        and ws.cell(row, col).number_format != "General"
+    )
+    return counts.most_common(1)[0][0] if counts else "#,##0"
+
+
 def populate_forecast_sheet_from_tableau_rows(
     workbook_path: str | Path,
     excel_sheet_name: str,
@@ -1122,16 +1285,23 @@ def populate_forecast_sheet_from_tableau_rows(
     columns by header name). Nothing is calculated, and every formula stays a
     formula:
 
-    * columns Tableau doesn't show (e.g. the forecast months, Grand Total)
-      keep their formulas on existing rows;
-    * added rows get the formulas of the row above, filled down;
-    * the header row is left alone (its =EDATE dates stay);
-    * the bottom total row's SUMs are re-pointed at the new rows.
+    * months Tableau doesn't show are left blank; the months it shows go to
+      their matching month columns;
+    * Revenue workbooks get the opposite sign of Tableau on the line values
+      only; the total row stays a plain SUM of the lines;
+    * columns Tableau doesn't show keep their formulas on existing rows, and
+      added rows get the formulas of the row above, filled down;
+    * typed-in columns Tableau doesn't have (e.g. Comments) stay with their
+      account, wherever that account lands;
+    * amounts formatted as dates get the sheet's usual number format;
+    * the header row is left alone, and the total row's SUMs are re-pointed
+      at the new lines.
     """
     from openpyxl.formula.translate import Translator
+    from openpyxl.styles.numbers import is_date_format
 
     workbook_path = Path(workbook_path)
-    wb = load_workbook(workbook_path, data_only=False)
+    wb = open_workbook_for_edit(workbook_path)
 
     try:
         if excel_sheet_name in wb.sheetnames:
@@ -1144,9 +1314,10 @@ def populate_forecast_sheet_from_tableau_rows(
                 if re.sub(r"[^a-z0-9]+", "", s.title.lower()) == wanted
             ]
             if len(matches) != 1:
-                raise RuntimeError(
-                    f'Excel sheet "{excel_sheet_name}" not found. '
-                    f"Available: {wb.sheetnames}"
+                raise PlainLanguageError(
+                    f'"{workbook_path.name.removeprefix("~updating ")}" has no tab called '
+                    f'"{excel_sheet_name}" (its tabs are {", ".join(wb.sheetnames)}). The tab may '
+                    "have been renamed; the mapping must use the tab's exact name."
                 )
             ws = matches[0]
 
@@ -1159,13 +1330,16 @@ def populate_forecast_sheet_from_tableau_rows(
 
         detail_rows = _s4_detail_rows(tableau_rows)
         if not detail_rows:
-            raise RuntimeError("No usable Tableau detail rows supplied.")
+            raise PlainLanguageError(
+                "The Tableau tab has no lines to paste (only headings or totals). "
+                "Check its filters in Tableau."
+            )
         tableau_months = _tableau_month_columns(detail_rows, fiscal_year)
         if not tableau_months:
-            raise RuntimeError("No Tableau fiscal month columns were found.")
-        # Tableau leaves out months with no data (e.g. a tab with nothing
-        # posted Jul-Sep). Those months are pasted as blank, like the tab
-        # shows them, and reported, so every fiscal period is filled in.
+            raise PlainLanguageError(
+                f"The Tableau tab has no month columns for {fiscal_year} (headings like "
+                '"Jul-26"). Check that it shows the right fiscal year.'
+            )
         missing = [m for m in sorted(FISCAL_MONTH_ORDER, key=FISCAL_MONTH_ORDER.get) if m not in tableau_months]
 
         # Every other Tableau column goes to the Excel column with the same
@@ -1192,9 +1366,42 @@ def populate_forecast_sheet_from_tableau_rows(
             if col is not None and col not in protected:
                 paste_columns[header] = col
 
-        first, old_last = _s4_current_detail(ws, structure)
+        first, old_last, old_total = _detail_range(ws, structure)
         old_count = max(0, old_last - first + 1)
         new_count = len(detail_rows)
+        gap = (old_total - old_last) if old_total else 1
+
+        # Merged cells inside the lines would be broken by adding or removing
+        # rows; unmerge them (their text stays on the block's first line).
+        unmerged = []
+        for merged in list(ws.merged_cells.ranges):
+            if merged.max_row >= first and merged.min_row <= old_last + gap:
+                unmerged.append(str(merged))
+                ws.unmerge_cells(str(merged))
+
+        # Typed-in columns Tableau doesn't fill (Comments, notes): remember
+        # them by account so they follow the account, not the row number.
+        carry_cols = [
+            col
+            for key, col in excel_headers.items()
+            if col not in protected
+            and col not in paste_columns.values()
+            and col not in structure["descriptive_columns"].values()
+            and not any(is_formula(ws.cell(r, col).value) for r in range(first, old_last + 1))
+        ]
+        key_cols = _account_key_columns(structure, paste_columns.values())
+        carried = {}
+        shown = {}
+        for row in range(first, old_last + 1 if key_cols else first):
+            values = {col: ws.cell(row, col).value for col in carry_cols if ws.cell(row, col).value not in (None, "")}
+            if values:
+                key = _row_key(ws, row, key_cols)
+                carried.setdefault(key, {}).update(values)
+                shown.setdefault(key, " / ".join(
+                    str(ws.cell(row, col).value) for col in key_cols if ws.cell(row, col).value not in (None, "")
+                ))
+
+        amount_format = _number_format_for_amounts(ws, structure, first, max(first, old_last))
 
         style_row = first if old_count else header_row
         styles = {col: ws.cell(style_row, col) for col in range(1, ws.max_column + 1)}
@@ -1218,6 +1425,8 @@ def populate_forecast_sheet_from_tableau_rows(
         last = first + new_count - 1
         pasted_months = {month_cols[m] for m in tableau_months}
         revenue = "revenue" in workbook_path.name.lower()
+        date_formats_fixed = 0
+        placed = set()
 
         for offset, tableau_row in enumerate(detail_rows):
             row = first + offset
@@ -1241,24 +1450,51 @@ def populate_forecast_sheet_from_tableau_rows(
                 ws.cell(row, month_cols[month]).value = None
             for month, header in tableau_months.items():
                 value = _s4number(tableau_row.get(header))
-                # Existing rule (step 3 relies on it): Revenue workbooks hold
-                # the opposite sign of Tableau.
+                # Revenue workbooks hold the opposite sign of Tableau. Only the
+                # line values flip; the total row is a SUM and is not touched.
                 if revenue and isinstance(value, (int, float)) and not isinstance(value, bool):
                     value = -value
-                ws.cell(row, month_cols[month]).value = value
+                cell = ws.cell(row, month_cols[month])
+                cell.value = value
+                if is_date_format(cell.number_format):
+                    cell.number_format = amount_format
+                    date_formats_fixed += 1
+
+            # Without account columns from Tableau there is nothing to match
+            # on, so typed-in columns are left exactly where they are.
+            if key_cols:
+                key = _row_key(ws, row, key_cols)
+                values = carried.get(key, {})
+                for col in carry_cols:
+                    ws.cell(row, col).value = values.get(col)
+                if values:
+                    placed.add(key)
 
             # A line with no Grand Total formula at all gets the usual one.
             if ws.cell(row, gt_col).value in (None, ""):
                 refs = [f"{get_column_letter(month_cols[m])}{row}" for m in FISCAL_MONTH_ORDER]
                 ws.cell(row, gt_col).value = "=SUM(" + ",".join(refs) + ")"
 
+        # Also fix date-formatted amounts in months Tableau left blank.
+        for row in range(first, last + 1):
+            for month in missing:
+                cell = ws.cell(row, month_cols[month])
+                if is_date_format(cell.number_format):
+                    cell.number_format = amount_format
+
         # Bottom total row: same SUMs, re-pointed at the pasted lines.
-        total_row = last + 1
+        total_row = last + gap
         for col in (*month_cols.values(), gt_col):
             letter = get_column_letter(col)
             ws.cell(total_row, col).value = f"=SUM({letter}{first}:{letter}{last})"
         all_cols = [ft_col, gt_col, *paste_columns.values(), *month_cols.values()]
         _s4_total_border(ws, total_row, min(all_cols), max(all_cols))
+
+        dropped = [
+            {"account": shown.get(key, ""), "text": " | ".join(str(v) for v in values.values())}
+            for key, values in carried.items()
+            if key not in placed
+        ]
 
         wb.save(workbook_path)
 
@@ -1273,9 +1509,13 @@ def populate_forecast_sheet_from_tableau_rows(
             "forecast_type": forecast_type,
             "revenue_sign_rule": revenue,
             "total_row": total_row,
+            "comments_kept": len(placed),
+            "comments_dropped": dropped,
+            "unmerged": unmerged,
+            "date_formats_fixed": date_formats_fixed,
         }
     finally:
-        wb.close()
+        close_workbook(wb)
 
 
 def populate_forecast_sheet_from_audit(

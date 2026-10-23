@@ -1,5 +1,8 @@
 from __future__ import annotations
-from datetime import datetime
+
+import json
+import os
+from datetime import date, datetime
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -14,6 +17,68 @@ def _counts(results):
     return out
 
 
+def merge_saved_results(
+    output_folder,
+    forecast_month,
+    forecast_year,
+    forecast_type,
+    categories_run,
+    results,
+) -> list[dict]:
+    """Keep the latest results of every category for the month's report.
+
+    The results are saved beside the report as a small .results.json file.
+    Running one category replaces that category's rows; results saved for
+    another forecast month are ignored.
+    """
+    period = date(forecast_year, forecast_month, 1)
+    store_path = Path(output_folder) / f"Forecast_Validation_{period:%b}_{forecast_year}.results.json"
+
+    saved = {}
+    try:
+        data = json.loads(store_path.read_text(encoding="utf-8"))
+        if data.get("forecast_type") == forecast_type and isinstance(data.get("categories"), dict):
+            for category, rows in data["categories"].items():
+                # An earlier version saved {"validated_at": ..., "results": [...]}.
+                if isinstance(rows, dict):
+                    rows = rows.get("results")
+                if isinstance(rows, list):
+                    saved[category] = [row for row in rows if isinstance(row, dict)]
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    def plain(value):
+        return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+    for category in categories_run:
+        saved[category] = [
+            {key: plain(value) for key, value in item.items()}
+            for item in results
+            if item.get("category", "") == category
+        ]
+
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
+    staged = store_path.with_name(f"~staging_{store_path.name}")
+    staged.write_text(
+        json.dumps({"forecast_type": forecast_type, "categories": saved}, indent=1, default=str),
+        encoding="utf-8",
+    )
+    os.replace(staged, store_path)
+
+    order = ["OPEX", "Direct Cost", "Revenue", "Other"]
+    ordered = [c for c in order if c in saved] + [c for c in saved if c not in order]
+    return [item for category in ordered for item in saved[category]]
+
+
+def _as_date(value):
+    """Tableau's "#2026-09-01#" (or "2026-09-01") as a real date; anything else as is."""
+    text = str(value or "").strip().strip("#")
+    try:
+        return datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return value
+
+
 def write_forecast_validation_report(
     validation_result,
     output_folder,
@@ -21,7 +86,8 @@ def write_forecast_validation_report(
     forecast_month,
     forecast_year,
     forecast_type,
-    tolerance=5.00,
+    tolerance=1000.00,
+    forecast_start=None,
 ):
     output_folder = Path(output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -61,7 +127,7 @@ def write_forecast_validation_report(
     rows = [
         ("Forecast Period", period.strftime("%B %Y")),
         ("Fiscal Year", fiscal_year),
-        ("Forecast Start", period),
+        ("Forecast Start", forecast_start or period),
         ("Forecast Type", forecast_type),
         ("Tolerance", tolerance),
         ("Routes Reported", len(results)),
@@ -70,6 +136,7 @@ def write_forecast_validation_report(
         ("Action Required", counts.get("ACTION REQUIRED", 0)),
         ("Not Validated", counts.get("NOT VALIDATED", 0)),
         ("Overall Status", overall),
+        ("Last Updated", datetime.now().strftime("%m/%d/%Y %I:%M %p")),
     ]
     for r, (label, value) in enumerate(rows, start=3):
         ws.cell(r, 1, label).font = Font(bold=True)
@@ -91,7 +158,8 @@ def write_forecast_validation_report(
         ("ACTION REQUIRED", "Validation could not complete and requires review."),
         (
             "NOT VALIDATED",
-            "Route is not yet configured for automated individual Tableau validation.",
+            "Not checked automatically: the individual Tableau tab needs an extra "
+            "department filter first (see Note).",
         ),
     ]
     for r, (s, m) in enumerate(guides, start=16):
@@ -109,10 +177,11 @@ def write_forecast_validation_report(
         "Tableau Grand Total",
         "Variance",
         "Status",
-        "Period Mode",
         "Forecast Start",
         "Forecast Type",
         "Note",
+        "Category",
+        "Validated At",
     ]
     for col, h in enumerate(headers, 1):
         c = detail.cell(1, col, h)
@@ -131,16 +200,18 @@ def write_forecast_validation_report(
             item.get("tableau_grand_total"),
             item.get("variance"),
             item.get("status"),
-            item.get("period_mode"),
-            item.get("forecast_start"),
+            _as_date(item.get("forecast_start")),
             item.get("forecast_type"),
             item.get("note"),
+            item.get("category"),
+            item.get("validated_at"),
         ]
         for col, v in enumerate(vals, 1):
             detail.cell(r, col, v)
             detail.cell(r, col).border = edge
         for col in (5, 6, 7):
             detail.cell(r, col).number_format = "$#,##0.00;[Red]-$#,##0.00"
+        detail.cell(r, 9).number_format = "mm/dd/yyyy"
         s = str(item.get("status") or "").upper()
         sc = detail.cell(r, 8)
         sc.font = Font(bold=True)
@@ -158,9 +229,10 @@ def write_forecast_validation_report(
         7: 16,
         8: 18,
         9: 18,
-        10: 18,
-        11: 26,
-        12: 70,
+        10: 26,
+        11: 70,
+        12: 16,
+        13: 20,
     }
     for col, w in widths.items():
         detail.column_dimensions[get_column_letter(col)].width = w
@@ -168,6 +240,19 @@ def write_forecast_validation_report(
         for c in row:
             c.alignment = Alignment(vertical="top", wrap_text=True)
 
-    wb.save(path)
+    # Save beside the report and swap it in, so a report open in Excel is
+    # reported clearly and a half-written file is never left behind.
+    staged = path.with_name(f"~saving_{path.name}")
+    wb.save(staged)
+    try:
+        os.replace(staged, path)
+    except PermissionError as exc:
+        staged.unlink(missing_ok=True)
+        from shared.friendly_errors import PlainLanguageError
+
+        raise PlainLanguageError(
+            f'The validation report "{path.name}" is open (in Excel, Teams or the browser), '
+            "so it could not be updated. Close it everywhere and click Validate again."
+        ) from exc
     wb.close()
     return path

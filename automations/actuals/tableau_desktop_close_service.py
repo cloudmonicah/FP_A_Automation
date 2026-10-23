@@ -21,9 +21,10 @@ import time
 #    forecast workbook selected by the user.
 # 3. Allow Tableau to close normally first.
 # 4. Handle a possible save confirmation dialog.
-# 5. Do NOT save changes during shutdown because the Forecast
+# 5. During a run, do NOT save changes on shutdown: the Forecast
 #    Start parameter was already written to the .twb before
-#    Tableau Desktop was opened.
+#    Tableau Desktop was opened. Saving the person's own work is
+#    done before the run starts (close_all_tableau_workbooks(save=True)).
 # 6. Tableau cleanup should not cause a successful forecast
 #    update to be reported as failed.
 # ============================================================
@@ -187,7 +188,7 @@ def _tableau_window_exists(
 # ============================================================
 
 
-def _handle_save_dialog() -> bool:
+def _handle_save_dialog(save: bool = False) -> bool:
     """
     Look for a Tableau/Windows save confirmation dialog and
     choose the option that closes WITHOUT saving.
@@ -214,12 +215,16 @@ def _handle_save_dialog() -> bool:
     # We intentionally choose a NON-SAVE action.
     # --------------------------------------------------------
 
-    discard_button_names = [
-        "Don't Save",
-        "Don’t Save",
-        "Discard",
-        "No",
-    ]
+    discard_button_names = (
+        ["Save", "Yes"]
+        if save
+        else [
+            "Don't Save",
+            "Don’t Save",
+            "Discard",
+            "No",
+        ]
+    )
 
     for window in desktop.windows():
 
@@ -486,11 +491,15 @@ def list_open_tableau_workbooks() -> list[str]:
     return titles
 
 
-def close_all_tableau_workbooks(wait_seconds: float = 15.0) -> dict:
-    """Close every open Tableau workbook WITHOUT saving.
+def close_all_tableau_workbooks(wait_seconds: float = 15.0, save: bool = False) -> dict:
+    """Close every open Tableau workbook.
 
-    Called before each workbook is opened, so only one Tableau workbook is
-    ever open during a run. Problems are returned as a warning, not raised.
+    save=False (during a run, before each workbook the app opens): close
+    WITHOUT saving, so only one Tableau workbook is ever open.
+    save=True (when the person asks, before a run starts): answer Tableau's
+    "save changes?" question with Save. A workbook Tableau can't save in place
+    (e.g. it would ask where to save it) stays open and is reported.
+    Problems are returned as a warning, not raised.
     """
     from pywinauto import Desktop
 
@@ -506,8 +515,8 @@ def close_all_tableau_workbooks(wait_seconds: float = 15.0) -> dict:
                 title = window.window_text()
                 if title in titles:
                     window.close()
-                    time.sleep(0.8)
-                    _handle_save_dialog()
+                    time.sleep(1.5 if save else 0.8)
+                    _handle_save_dialog(save=save)
             except Exception:
                 continue
 
@@ -517,7 +526,7 @@ def close_all_tableau_workbooks(wait_seconds: float = 15.0) -> dict:
             remaining = list_open_tableau_workbooks()
             if not remaining:
                 break
-            _handle_save_dialog()
+            _handle_save_dialog(save=save)
             time.sleep(0.5)
 
         result["closed"] = [t for t in titles if t not in remaining]

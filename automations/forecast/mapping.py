@@ -148,7 +148,7 @@ FORECAST_ROUTES = [
     {
         "tableau_worksheet": "ALIV Facilities - Engineering",
         "workbook": "FY27 OPEX Engineering & Technology_Aug Forecast.xlsx",
-        "excel_sheet": "Facilities - ALIV ",
+        "excel_sheet": "Facilities - ALIV",
         "individual_tableau_folder": workbook_path("OPEX"),
         "category": "OPEX",
         "individual_tableau_workbook": "Group Premises & Facilities_ALL Departments.twb",
@@ -189,16 +189,17 @@ FORECAST_ROUTES = [
         "company_filter": "CBL",
         "validation_status": "confirmed",
     },
-    # {
-    #     "tableau_worksheet": "ALIV Consumer Sales",
-    #     "workbook": "FY27 OPEX Consumer Sales_Aug Forecast.xlsx",
-    #     "excel_sheet": "ALIV",
-    #     "individual_tableau_folder": workbook_path("OPEX"),
-    #     "individual_tableau_workbook": "Consumer Sales.twb",
-    #     "individual_tableau_worksheet": "Monthly Forecast",
-    #     "company_filter": "ALIV",
-    #     "validation_status": "confirmed",
-    # },
+    {
+        "tableau_worksheet": "ALIV Consumer Sales",
+        "workbook": "FY27 OPEX Consumer Sales_Aug Forecast.xlsx",
+        "excel_sheet": "ALIV",
+        "individual_tableau_folder": workbook_path("OPEX"),
+        "category": "OPEX",
+        "individual_tableau_workbook": "Consumer Sales.twb",
+        "individual_tableau_worksheet": "Monthly Forecast",
+        "company_filter": "ALIV",
+        "validation_status": "confirmed",
+    },
     {
         "tableau_worksheet": "CBL Consumer Sales",
         "workbook": "FY27 OPEX Consumer Sales_Aug Forecast.xlsx",
@@ -247,6 +248,20 @@ FORECAST_ROUTES = [
         "validation_status": "needs_filter",
         "validation_filter_note": "Marketing subdepartment",
     },
+    # Same sheet as the "MEDIA (MARKETING)" route below (FY27 OPEX Media (MARKETING)),
+    # which already fills it. This one looks for "OPEX Media (MARKETING)_<Mon> Forecast.xlsx" (no FY27).
+    # {
+    #     "tableau_worksheet": "Media (MARKETING)",
+    #     "workbook": "OPEX Media (MARKETING)_Sep Forecast.xlsx",
+    #     "excel_sheet": "Media (MARKETING)",
+    #     "individual_tableau_folder": workbook_path("OPEX"),
+    #     "category": "OPEX",
+    #     "individual_tableau_workbook": "Consumer Marketing & Product Development.twb",
+    #     "individual_tableau_worksheet": "",
+    #     "company_filter": "CBL",
+    #     "validation_status": "needs_filter",
+    #     "validation_filter_note": "",
+    # },
     {
         "tableau_worksheet": "ALIV MARKETING",
         "workbook": "FY27 OPEX Consumer Marketing & Product Development_Aug Forecast.xlsx",
@@ -293,7 +308,7 @@ FORECAST_ROUTES = [
         "validation_status": "confirmed",
     },
     {
-        "tableau_worksheet": "ALIV Head Office",
+        "tableau_worksheet": "ALIV Head Office_John Gomez",
         "workbook": "FY27 OPEX ALIV Head Office_Aug Forecast.xlsx",
         "excel_sheet": "Aliv Head Office",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -397,7 +412,7 @@ FORECAST_ROUTES = [
     {
         "tableau_worksheet": "MEDIA (MARKETING)",
         "workbook": "FY27 OPEX Media (MARKETING)_Aug Forecast.xlsx",
-        "excel_sheet": "Media",
+        "excel_sheet": "Media (MARKETING)",
         "individual_tableau_folder": workbook_path("OPEX"),
         "category": "OPEX",
         "individual_tableau_workbook": "Media.twb",
@@ -406,7 +421,7 @@ FORECAST_ROUTES = [
         "validation_filter_note": "MARKETING / Media; company filter must be confirmed",
     },
     {
-        "tableau_worksheet": "ALIV  OPERATIONS ",
+        "tableau_worksheet": "ALIV OPERATIONS",
         "workbook": "FY27 OPEX Operations_Aug Forecast.xlsx",
         "excel_sheet": "ALIV",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -417,7 +432,7 @@ FORECAST_ROUTES = [
         "validation_status": "confirmed",
     },
     {
-        "tableau_worksheet": "CBL  OPERATIONS",
+        "tableau_worksheet": "CBL OPERATIONS",
         "workbook": "FY27 OPEX Operations_Aug Forecast.xlsx",
         "excel_sheet": "CBL",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -428,7 +443,7 @@ FORECAST_ROUTES = [
         "validation_status": "confirmed",
     },
     {
-        "tableau_worksheet": "CBL  OUTSIDE PLANT",
+        "tableau_worksheet": "CBL OUTSIDE PLANT",
         "workbook": "FY27 OPEX OSP Outside Plant_Aug Forecast.xlsx",
         "excel_sheet": "OSP Outside Plant- CBL",
         "individual_tableau_folder": workbook_path("OPEX"),
@@ -445,11 +460,29 @@ FORECAST_ROUTES = [
         "excel_sheet": "Mobile SAC_Finance",
         "individual_tableau_folder": workbook_path("SAC"),
         "category": "Other",
-        "individual_tableau_workbook": "Cable Bahamas Group_SAC.twb",
+        "individual_tableau_workbook": "ALIV SAC_Finance.twb",
         "individual_tableau_worksheet": "ALIV SAC Monthly Forecast",
         "company_filter": "ALIV",
-        "validation_status": "needs_filter",
-        "validation_filter_note": "Finance SAC",
+        "validation_status": "confirmed",
+        # The tab shows all ALIV SAC. Finance SAC is the same lines the
+        # consolidated "ALIV MOBILE SAC _FINANCE" tab keeps: everything except
+        # these Consumer/Corporate handset sub-accounts.
+        "individual_exclude": {
+            "GL Sub Account Description": [
+                "CONSUMER POSTPAID IFRS H/SET DEF AMORT COSTS",
+                "CORPORATE POSTPAID ACQUISITION",
+                "CORPORATE POSTPAID IFRS H/SET DEF AMORT COSTS",
+                "DEVICE REVENUE-CORPORATE POSTPAID ACQUISITION",
+                "DEVICE REVENUE-PREPAID ACQUISITION",
+                "HANDSET LANDED COST-PRE ACQ",
+                "HANDSET PROMOTIONS & DISCOUNTS",
+                "HANDSET STAFF COMMISSIONS CONSUMER",
+                "HANDSET STAFF COMMISSIONS CORPORATE",
+                "IFRS 15-EQUIPMENT REVENUE-CONSUMER",
+                "IFRS 15-EQUIPMENT REVENUE-CORPORATE",
+                "PREPAID ACQUISITION",
+            ]
+        },
     },
     {
         "tableau_worksheet": "ALIV CORPORATE SAC Monthly Forecast",
@@ -552,18 +585,20 @@ FORECAST_ROUTES = [
         "company_filter": "ALIV",
         "validation_status": "confirmed",
     },
-    {
-        "tableau_worksheet": "ALIV OTHER REVENUE DETAILS (FINANCE) - Monthly Forecast",
-        "workbook": "FY27 OTHER REVENUE_Aug Forecast.xlsx",
-        "excel_sheet": "ALIV",
-        "individual_tableau_folder": workbook_path("Revenue"),
-        "category": "Revenue",
-        "individual_tableau_workbook": "CBL Group Revenue_Finance View.twb",
-        "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
-        "company_filter": "ALIV",
-        "validation_status": "needs_filter",
-        "validation_filter_note": "Other Revenue only",
-    },
+    # Removed Oct 2026: the ALIV Other Revenue tab no longer exists in the
+    # consolidated FY Forecast workbook, so this line is not forecast here.
+    # {
+    #     "tableau_worksheet": "ALIV OTHER REVENUE DETAILS (FINANCE) - Monthly Forecast",
+    #     "workbook": "FY27 OTHER REVENUE_Aug Forecast.xlsx",
+    #     "excel_sheet": "ALIV",
+    #     "individual_tableau_folder": workbook_path("Revenue"),
+    #     "category": "Revenue",
+    #     "individual_tableau_workbook": "CBL Group Revenue_Finance View.twb",
+    #     "individual_tableau_worksheet": "ALIV Monthly Revenue Forecast",
+    #     "company_filter": "ALIV",
+    #     "validation_status": "needs_filter",
+    #     "validation_filter_note": "Other Revenue only",
+    # },
     # ---------------- BELOW THE LINE ----------------
     {
         "tableau_worksheet": "CBL Below the Line Details_ Monthly",
@@ -579,7 +614,7 @@ FORECAST_ROUTES = [
     {
         "tableau_worksheet": "ALIV Below the Line Details_ Monthly",
         "workbook": "FY27 ALIV BELOW THE LINE_Aug Forecast.xlsx",
-        "excel_sheet": " Finance - ALIV",
+        "excel_sheet": "Finance - ALIV",
         "individual_tableau_folder": workbook_path("Below the Line"),
         "category": "Other",
         "individual_tableau_workbook": "Cable Bahamas Group_Below the Line.twb",
@@ -600,17 +635,18 @@ FORECAST_ROUTES = [
         "validation_status": "needs_filter",
         "validation_filter_note": "Finance commissions/service fees",
     },
-    # {
-    #     "tableau_worksheet": "ALIV Direct Cost (CONSUMER SALES) - COMMISSIONS Forecast",
-    #     "workbook": "FY27 ALIV DIRECT COSTS (CONSUMER SALES) COMMISSIONS_Aug Forecast.xlsx",
-    #     "excel_sheet": "ALIV",
-    #     "individual_tableau_folder": workbook_path("Direct Cost"),
-    #     "individual_tableau_workbook": "Group Direct Costs_Consumer Product Development.twb",
-    #     "individual_tableau_worksheet": "Group Direct Cost Forecast ",
-    #     "company_filter": "ALIV",
-    #     "validation_status": "needs_filter",
-    #     "validation_filter_note": "Consumer Sales commissions",
-    # },
+    {
+        "tableau_worksheet": "ALIV Direct Cost (CONSUMER SALES) - COMMISSIONS Forecast",
+        "workbook": "FY27 ALIV DIRECT COSTS (CONSUMER SALES) COMMISSIONS_Aug Forecast.xlsx",
+        "excel_sheet": "ALIV",
+        "individual_tableau_folder": workbook_path("Direct Cost"),
+        "category": "Direct Cost",
+        "individual_tableau_workbook": "Group Direct Costs_Consumer Product Development.twb",
+        "individual_tableau_worksheet": "Group Direct Cost Forecast ",
+        "company_filter": "ALIV",
+        "validation_status": "needs_filter",
+        "validation_filter_note": "Consumer Sales commissions",
+    },
     {
         "tableau_worksheet": "ALIV Direct Cost (FINANCE) - COMMISSIONS_SERVICE FEES Forecast",
         "workbook": "FY27 ALIV DIRECT COSTS (FINANCE) COMMISSIONS SERVICE FEES_Aug Forecast.xlsx",
@@ -785,6 +821,9 @@ def _workbook_stem(value):
         value = value.replace(f"_{month} forecast", "")
     return value.strip()
 
+from . import individual_selections as _individual_selections  # noqa: E402
+
+_individual_selections.apply(FORECAST_ROUTES)
 
 # Step 2 runs one category at a time. "Other" holds SAC and Below the Line.
 FORECAST_CATEGORIES = ("OPEX", "Direct Cost", "Revenue", "Other")

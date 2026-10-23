@@ -7,6 +7,10 @@ import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 
+# Keep Tableau's own "user:" prefix when a .twb is saved; without this,
+# ElementTree renames it to "ns0:" throughout the file.
+ET.register_namespace("user", "http://www.tableausoftware.com/xml/user")
+
 # ============================================================
 # TABLEAU FORECAST SERVICE
 # ============================================================
@@ -1532,6 +1536,25 @@ def _parse_crosstab_text(
 # ============================================================
 
 
+def raw_copy_path(raw_output_folder, worksheet_name: str, sequence_number=None) -> Path:
+    """A short, unique file name for a raw Tableau copy.
+
+    Windows paths stop working past 260 characters, and the shared Teams
+    folder already uses about 180, so long tab names are shortened (a short
+    code keeps similar names apart).
+    """
+    import hashlib
+
+    folder = Path(raw_output_folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", worksheet_name.strip()).strip("_")
+    code = hashlib.sha1(worksheet_name.strip().encode("utf-8")).hexdigest()[:6]
+    room = max(12, 250 - len(str(folder)) - len("_000_ab12cd_20261022_101500.txt"))
+    safe = safe[: min(40, room)].rstrip("_")
+    prefix = f"{sequence_number:03d}_" if sequence_number is not None else ""
+    return folder / f"{prefix}{safe}_{code}_{datetime.now():%Y%m%d_%H%M%S}.txt"
+
+
 def get_tableau_crosstab_rows(
     worksheet_name: str,
     max_menu_attempts: int = 5,
@@ -1783,37 +1806,13 @@ def get_tableau_crosstab_rows(
     clipboard_text = _get_clipboard_text()
 
     if raw_output_folder is not None:
-
-        raw_output_path = Path(raw_output_folder)
-
-        raw_output_path.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        safe_worksheet_name = re.sub(
-            r"[^A-Za-z0-9_-]+",
-            "_",
-            worksheet_name.strip(),
-        ).strip("_")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-
-        if sequence_number is not None:
-            raw_filename = (
-                f"{sequence_number:03d}_" f"{safe_worksheet_name}_" f"{timestamp}.txt"
-            )
-        else:
-            raw_filename = f"{safe_worksheet_name}_" f"{timestamp}.txt"
-
-        raw_file = raw_output_path / raw_filename
-
-        raw_file.write_text(
-            clipboard_text,
-            encoding="utf-8",
-        )
-
-        print("Raw Tableau clipboard saved: " f"{raw_file}")
+        # The raw copy is only a backup: saving it must never stop the copy.
+        try:
+            raw_file = raw_copy_path(raw_output_folder, worksheet_name, sequence_number)
+            raw_file.write_text(clipboard_text, encoding="utf-8")
+            print("Raw Tableau clipboard saved: " f"{raw_file}")
+        except OSError as exc:
+            print(f"[RAW COPY NOT SAVED] {worksheet_name}: {exc}")
 
     # ========================================================
     # STEP 8 - PARSE TABLEAU CROSSTAB

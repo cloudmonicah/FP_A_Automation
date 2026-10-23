@@ -1934,21 +1934,10 @@ def finalize_forecast_sheet(
 
 def get_forecast_automation_log_folders() -> dict:
 
-    corporate_onedrive = Path.home() / "OneDrive - Aliv"
+    from shared.output_root import shared_output_root
 
-    # ========================================================
-    # VALIDATE CORPORATE ONEDRIVE
-    # ========================================================
-
-    if not corporate_onedrive.exists():
-        raise RuntimeError(
-            "Corporate OneDrive folder was not found.\n\n"
-            f"Expected location:\n{corporate_onedrive}"
-        )
-
-    # ========================================================
-    # FORECAST AUTOMATION LOG ROOT
-    # ========================================================
+    # Logs go to the shared Teams folder, never a personal OneDrive.
+    corporate_onedrive = shared_output_root()
 
     automation_root = corporate_onedrive / "Logs" / "Forecast_Automation"
 
@@ -1990,7 +1979,7 @@ def get_forecast_automation_log_folders() -> dict:
     print("=" * 70)
     print("FORECAST AUTOMATION LOG LOCATIONS")
     print("=" * 70)
-    print(f"Corporate OneDrive : {corporate_onedrive}")
+    print(f"Shared folder      : {corporate_onedrive}")
     print(f"Automation Logs    : {automation_root}")
     print(f"Tableau Raw Copies : {raw_folder}")
     print(f"Run Logs           : {run_folder}")

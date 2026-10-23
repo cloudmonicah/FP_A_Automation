@@ -27,9 +27,12 @@ DEFAULTS: dict[str, Any] = {
     # Direct Cost subfolders. Any path setting may use environment variables,
     # e.g. %USERPROFILE%\Aliv\FP&A - Workbooks for a synced SharePoint library.
     "workbooks_root": r"E:\Workbooks",
-    # Actuals validation output. Blank = find the synced OneDrive folder automatically.
+    # The Teams "Validation Results" folder all output goes to. Blank = find the
+    # "Financial Planning & Analysis-Validation Results - Documents" shortcut in
+    # the current person's OneDrive (see shared/output_root.py).
+    "shared_output_root": "",
+    # Optional separate roots; blank = the shared folder above.
     "validation_output_root": "",
-    # Forecast validation output. Blank = the synced OneDrive shortcut folder.
     "forecast_validation_output_root": "",
     # Default folders on the Initial Budget Setup page.
     "budget_source_folder": r"E:\Sources\Budgets",
